@@ -176,7 +176,7 @@ function timeToMin(v){
 function isoDate(v){
   let s=String(v).trim();
   let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m){return `${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;}
+  m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m){return `${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;}
   let dt=new Date(s); if(!isNaN(dt)) return dt.toISOString().slice(0,10);
   return null;
 }
@@ -222,7 +222,7 @@ function buildDATA(objs){
     ((a.work_location__filter||'').localeCompare(b.work_location__filter||''))||
     ((a.employee_name||'').localeCompare(b.employee_name||'')));
   const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], mon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const fmt=d=>d.toISOString().slice(0,10);
+  const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const days=allDates.map(d=>({iso:fmt(d),d:d.getDate(),mon:mon[d.getMonth()],dow:dow[d.getDay()],sun:d.getDay()===0,future:fmt(d)>dmax}));
   const employees=order.map(mt=>{
     const eid=mt.employee_id; const cells=allDates.map(d=>{
