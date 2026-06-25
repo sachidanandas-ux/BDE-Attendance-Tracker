@@ -98,13 +98,35 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
 .legend .sw{width:16px;height:16px;border-radius:5px;border:1px solid var(--line-strong)}
 .note-foot{padding:6px 32px 40px;font-size:11.5px;color:var(--ink-soft);max-width:780px;font-style:italic}
 @media(max-width:640px){header,.metrics,.controls,.legend,.note-foot{padding-left:16px;padding-right:16px}.count{width:100%;margin:6px 0 0}}
+
+:root{--exit-bg:#fdf0e4;--exit-line:#e9c38f;--exit-ink:#b5722a}
+td.cell .rev{display:block;font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:600;line-height:1;margin-top:1px;color:var(--present);opacity:.92}
+td.cell.A .rev,td.cell.X .rev{color:#9a6b2a}
+td.cell.hasrev{box-shadow:inset 0 -2px 0 rgba(31,122,77,.35)}
+td.cell.exitcell{filter:saturate(.55)}
+tr.exitrow td.name{background:var(--exit-bg)}
+.tag.exit{display:inline-block;font-size:9px;padding:1px 5px;border-radius:5px;margin-left:6px;vertical-align:middle;background:var(--exit-line);color:#7a4a16;font-weight:600}
+th.stat-h.s-rev,td.statcol.s-rev{left:228px}
+th.stat-h.s-m,td.statcol.s-m{left:300px}
+th.stat-h.s-f,td.statcol.s-f{left:362px}
+td.statcol.s-f,th.stat-h.s-f{border-right:2px solid var(--line-strong)}
+td.statcol.s-rev{color:var(--present);font-weight:600}
+.ms{position:relative;display:inline-block}
+.ms-btn{font-family:inherit;font-size:12.5px;font-weight:500;padding:7px 11px;border:1px solid var(--line-strong);border-radius:9px;background:var(--card);color:var(--ink-soft);cursor:pointer}
+.ms-btn.active{border-color:var(--accent);color:var(--ink);background:#fdf4e8}
+.ms-cnt{color:var(--accent);font-weight:600}
+.ms-pop{display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:60;background:var(--card);border:1px solid var(--line-strong);border-radius:10px;box-shadow:var(--shadow);padding:6px;min-width:150px;max-height:260px;overflow:auto}
+.ms-pop.open{display:block}
+.ms-opt{display:flex;align-items:center;gap:7px;padding:5px 8px;font-size:12.5px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.ms-opt:hover{background:var(--paper)}.ms-opt input{accent-color:var(--accent)}
+
 </style>
 </head>
 <body>
 <header>
   <div class="eyebrow">FST · Field Sales Team</div>
   <h1>BDE Attendance <em>Tracker</em></h1>
-  <p class="sub">Daily present/absent by BDE. Present = 4+ validated meetings, sign-in before 11 AM, and followups cleared. Striped (∅) = no sign-in. Metrics and grid update live with the filters below.</p>
+  <p class="sub">Daily present/absent by BDE. Present = 4+ validated meetings, sign-in before 11 AM, and followups cleared. Striped (∅) = no sign-in. Each cell shows daily revenue (₹). Live from Google Sheets, refreshing every 5 min. Filters are multi-select.</p>
 </header>
 
 <div class="metrics" id="metrics"></div>
@@ -112,19 +134,18 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
 <div class="controls">
   <div class="grp"><label>From</label><input type="date" id="from"></div>
   <div class="grp"><label>To</label><input type="date" id="to"></div>
-  <div class="grp"><label>Month</label>
-    <select id="month"><option value="">All</option></select></div>
-  <div class="grp"><label>Location</label>
-    <select id="loc"><option value="">All</option></select></div>
-  <div class="seg" id="statusSeg">
-    <button data-f="" class="on">All</button>
-    <button data-f="A">Absent</button>
-    <button data-f="P">Present</button>
-  </div>
+  <div class="grp"><label>Month</label><select id="month"><option value="">All</option></select></div>
+  <div class="ms" id="msCity"></div>
+  <div class="ms" id="msTier"></div>
+  <div class="ms" id="msVint"></div>
+  <div class="ms" id="msLic"></div>
+  <div class="seg" id="statusSeg"><button data-f="" class="on">All</button><button data-f="A">Absent</button><button data-f="P">Present</button></div>
   <label class="chk"><input type="checkbox" id="hideTrain"> Hide training</label>
+  <label class="chk"><input type="checkbox" id="showExit"> Show exit</label>
   <input type="search" id="q" placeholder="Search name or ID…">
   <div class="count" id="count"></div>
-  <div id="updated" style="width:100%;font-size:11px;color:var(--ink-soft);margin-top:4px"></div>
+  <div id="updated" style="display:none"></div>
+</div>
 </div>
 
 <div class="wrap"><table id="grid"><thead></thead><tbody></tbody></table></div>
@@ -134,381 +155,218 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
 <div id="tip"></div>
 
 <script>
-let DATA = null;
-const SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIZrKuTJUdzshNzKht_KW70twLDExz7qC__iia1oYPE68KTeKlmcTrjiHjutOfsmlMfkuZTc1vX1af/pub?gid=316852425&single=true&output=csv";
-const REFRESH_MS = 5*60*1000;
+
+const ATT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIZrKuTJUdzshNzKht_KW70twLDExz7qC__iia1oYPE68KTeKlmcTrjiHjutOfsmlMfkuZTc1vX1af/pub?gid=316852425&single=true&output=csv";
+const REV_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIZrKuTJUdzshNzKht_KW70twLDExz7qC__iia1oYPE68KTeKlmcTrjiHjutOfsmlMfkuZTc1vX1af/pub?gid=867698418&single=true&output=csv";
 const MEETING_ENFORCED_FROM = "2026-06-04";
+let DATA = null;
 const BDE_DESIGS = {
-  "senior business development executive":"Sr BDE",
-  "business development executive":"BDE",
-  "subject matter expert - fst":"SME-FST",
-  "subject matter expert(sme)":"SME"
+  "senior business development executive":"Sr BDE","sr. business development executive":"Sr BDE",
+  "business development executive":"BDE","subject matter expert - fst":"SME-FST","subject matter expert(sme)":"SME"
 };
-
-function parseCSV(text){
-  const rows=[]; let i=0,f='',row=[],q=false;
-  while(i<text.length){
-    const c=text[i];
-    if(q){
-      if(c==='"'){ if(text[i+1]==='"'){f+='"';i++;} else q=false; }
-      else f+=c;
-    }else{
-      if(c==='"')q=true;
-      else if(c===','){row.push(f);f='';}
-      else if(c==='\n'){row.push(f);rows.push(row);row=[];f='';}
-      else if(c==='\r'){}
-      else f+=c;
-    }
-    i++;
-  }
-  if(f.length||row.length){row.push(f);rows.push(row);}
-  return rows;
-}
-function csvToObjects(text){
-  const rows=parseCSV(text).filter(r=>r.length>1||(r.length===1&&r[0].trim()!==''));
-  if(!rows.length) return [];
-  const hdr=rows[0].map(h=>h.trim().toLowerCase());
-  return rows.slice(1).map(r=>{const o={};hdr.forEach((h,i)=>o[h]=(r[i]??'').trim());return o;});
-}
-
-function timeToMin(v){
-  if(!v) return null;
-  let s=String(v).trim();
-  // try ISO timestamp
-  let dt=new Date(s.replace(' ','T'));
-  if(!isNaN(dt) && /\d{4}-\d{2}-\d{2}/.test(s)) return dt.getHours()*60+dt.getMinutes();
-  // try HH:MM[:SS] or h:mm AM/PM
+function parseCSV(text){const rows=[];let i=0,f='',row=[],q=false;
+  while(i<text.length){const c=text[i];
+    if(q){if(c==='"'){if(text[i+1]==='"'){f+='"';i++;}else q=false;}else f+=c;}
+    else{if(c==='"')q=true;else if(c===','){row.push(f);f='';}
+      else if(c==='\n'){row.push(f);rows.push(row);row=[];f='';}else if(c==='\r'){}else f+=c;}
+    i++;}
+  if(f.length||row.length){row.push(f);rows.push(row);}return rows;}
+function csvToObjects(text){const rows=parseCSV(text).filter(r=>r.length>1||(r.length===1&&r[0].trim()!==''));
+  if(!rows.length)return [];const hdr=rows[0].map(h=>h.trim().toLowerCase());
+  return rows.slice(1).map(r=>{const o={};hdr.forEach((h,i)=>o[h]=(r[i]??'').trim());return o;});}
+function timeToMin(v){if(!v)return null;let s=String(v).trim();let dt=new Date(s.replace(' ','T'));
+  if(!isNaN(dt)&&/\d{4}-\d{2}-\d{2}/.test(s))return dt.getHours()*60+dt.getMinutes();
   let m=s.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?/i);
-  if(m){let h=+m[1],mi=+m[2];const ap=(m[3]||'').toLowerCase();
-    if(ap==='pm'&&h<12)h+=12; if(ap==='am'&&h===12)h=0; return h*60+mi;}
-  return null;
-}
-function isoDate(v){
-  let s=String(v).trim();
-  let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m){return `${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;}
-  let dt=new Date(s); if(!isNaN(dt)) return dt.toISOString().slice(0,10);
-  return null;
-}
+  if(m){let h=+m[1],mi=+m[2];const ap=(m[3]||'').toLowerCase();if(ap==='pm'&&h<12)h+=12;if(ap==='am'&&h===12)h=0;return h*60+mi;}return null;}
+function isoDate(v){let s=String(v).trim();let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return `${m[1]}-${m[2]}-${m[3]}`;
+  m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(m)return `${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  let dt=new Date(s);if(!isNaN(dt))return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;return null;}
 function num(v){if(v==null||String(v).trim()==='')return null;const n=parseFloat(String(v).replace(/[^\d.-]/g,''));return isNaN(n)?null:Math.trunc(n);}
+function inr(n){if(n==null)return '—';if(n>=1e7)return '₹'+(n/1e7).toFixed(2)+'Cr';if(n>=1e5)return '₹'+(n/1e5).toFixed(2)+'L';if(n>=1e3)return '₹'+(n/1e3).toFixed(1)+'k';return '₹'+n;}
 
-function evaluate(row, isoD){
-  const rem=(row.remarks||'').toLowerCase();
-  const status=(row.status||'').toLowerCase();
-  if(rem.includes('week off')) return {code:'H'};
-  if(rem.includes('training')) return {code:'T'};
-  const smin=timeToMin(row.signintime);
-  const signin = smin==null?null:`${String(Math.floor(smin/60)).padStart(2,'0')}:${String(smin%60).padStart(2,'0')}`;
-  let vam=num(row.validate_active_meetings); const mc=vam==null?0:vam;
-  const noLogin=smin==null;
-  const out={signin,signinMin:smin,mc};
-  if(isoD < MEETING_ENFORCED_FROM){
-    out.code = status==='active'?'P':'A'; out.pre=true;
-    if(out.code==='A'&&noLogin) out.nologin=true;
-    return out;
-  }
-  const s=(!noLogin)&&(smin<11*60);
-  const m=mc>=4;
-  const fsN=num(row.followup_set), fdN=num(row.followups_done);
-  let f=true,fset=0,fdone=0;
-  if(fsN!=null&&fdN!=null&&fsN>0){fset=fsN;fdone=fdN;f=fdone>=fset;}
-  out.code=(m&&s&&f)?'P':'A'; out.m=m;out.s=s;out.f=f;out.fset=fset;out.fdone=fdone;
-  if(out.code==='A'&&noLogin) out.nologin=true;
-  return out;
-}
-
-function buildDATA(objs){
-  const rows=objs.filter(r=>BDE_DESIGS[(r.designation__filter||'').toLowerCase()]);
-  rows.forEach(r=>r._iso=isoDate(r.date));
-  const valid=rows.filter(r=>r._iso);
-  if(!valid.length) throw new Error('No BDE rows with valid dates found in sheet');
-  const isos=valid.map(r=>r._iso).sort();
-  const dmin=isos[0], dmax=isos[isos.length-1];
-  const start=new Date(dmin+'T00:00:00'), end=new Date(dmax+'T00:00:00');
-  const allDates=[]; for(let d=new Date(start); d<=end; d.setDate(d.getDate()+1)) allDates.push(new Date(d));
-  const byEmp={}, meta={};
-  valid.forEach(r=>{(byEmp[r.employee_id]=byEmp[r.employee_id]||{})[r._iso]=r; meta[r.employee_id]=r;});
-  const order=Object.values(meta).sort((a,b)=>
-    ((a.work_location__filter||'').localeCompare(b.work_location__filter||''))||
-    ((a.employee_name||'').localeCompare(b.employee_name||'')));
-  const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], mon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function buildDATA(attObjs, revObjs){
+  const aRows=attObjs.filter(r=>BDE_DESIGS[(r.designation__filter||'').toLowerCase()]);
+  aRows.forEach(r=>r._iso=isoDate(r.date));
+  const aValid=aRows.filter(r=>r._iso);
+  if(!aValid.length) throw new Error('No BDE attendance rows with valid dates');
+  const normName=n=>(n||'').toLowerCase().replace(/\./g,' ').replace(/\s+/g,' ').trim();
+  const revByName={}, agentAttr={};
+  revObjs.forEach(r=>{const key=normName(r.employee_name);if(!key)return;
+    const iso=isoDate(r.payment_date);if(!iso)return;const amt=num(r.ttl_revenue)||0;
+    const m=(revByName[key]=revByName[key]||{});const cell=(m[iso]=m[iso]||{rev:0,lic:{}});
+    cell.rev+=amt;const st=(r.lic_status||'?');cell.lic[st]=(cell.lic[st]||0)+amt;
+    const a=(agentAttr[key]=agentAttr[key]||{tier:new Set(),vintage:'',city:'',exit:'0'});
+    if(r.tier)a.tier.add(r.tier);if(r.agent_vintage&&!a.vintage)a.vintage=r.agent_vintage;
+    if(r.city&&!a.city)a.city=r.city;if(r.exit==='1')a.exit='1';});
+  const aIsos=aValid.map(r=>r._iso).sort();const dmin=aIsos[0],dmax=aIsos[aIsos.length-1];
+  const start=new Date(dmin+'T00:00:00'),end=new Date(dmax+'T00:00:00');
+  const allDates=[];for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1))allDates.push(new Date(d));
   const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const days=allDates.map(d=>({iso:fmt(d),d:d.getDate(),mon:mon[d.getMonth()],dow:dow[d.getDay()],sun:d.getDay()===0,future:fmt(d)>dmax}));
-  const employees=order.map(mt=>{
-    const eid=mt.employee_id; const cells=allDates.map(d=>{
-      if(d.getDay()===0) return {code:'H'};
-      const iso=fmt(d); const row=byEmp[eid][iso];
-      if(!row) return {code:'X',future:iso>dmax,nodata:true};
-      return evaluate(row, iso);
-    });
-    return {id:eid,name:mt.employee_name,desig:BDE_DESIGS[(mt.designation__filter||'').toLowerCase()],loc:mt.work_location__filter,cells};
-  });
+  const byEmp={},meta={};aValid.forEach(r=>{(byEmp[r.employee_id]=byEmp[r.employee_id]||{})[r._iso]=r;meta[r.employee_id]=r;});
+  const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],mon3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const days=allDates.map(d=>({iso:fmt(d),d:d.getDate(),mon:mon3[d.getMonth()],dow:dow[d.getDay()],sun:d.getDay()===0,future:fmt(d)>dmax}));
+  function evalCell(row,isoD,revCell){
+    const rem=((row&&row.remarks)||'').toLowerCase();const status=((row&&row.status)||'').toLowerCase();
+    const out={rev:revCell?revCell.rev:0,lic:revCell?revCell.lic:null};
+    if(!row){out.code='X';return out;}
+    if(rem.includes('week off')){out.code='H';return out;}
+    if(rem.includes('training')){out.code='T';return out;}
+    const smin=timeToMin(row.signintime);out.signin=smin==null?null:`${String(Math.floor(smin/60)).padStart(2,'0')}:${String(smin%60).padStart(2,'0')}`;out.signinMin=smin;
+    const vam=num(row.validate_active_meetings);out.mc=vam==null?0:vam;const noLogin=smin==null;
+    const fsN=num(row.followup_set),fdN=num(row.followups_done);
+    out.fset=(fsN!=null&&fsN>0)?fsN:0;out.fdone=(fsN!=null&&fsN>0&&fdN!=null)?fdN:0;
+    if(isoD<MEETING_ENFORCED_FROM){out.code=status==='active'?'P':'A';out.pre=true;if(out.code==='A'&&noLogin)out.nologin=true;return out;}
+    const s=(!noLogin)&&(smin<11*60),m=out.mc>=4;let f=true;if(out.fset>0)f=out.fdone>=out.fset;
+    out.code=(m&&s&&f)?'P':'A';out.m=m;out.s=s;out.f=f;if(out.code==='A'&&noLogin)out.nologin=true;return out;}
+  const order=Object.values(meta).sort((a,b)=>((a.work_location__filter||'').localeCompare(b.work_location__filter||''))||((a.employee_name||'').localeCompare(b.employee_name||'')));
+  const employees=order.map(mt=>{const eid=mt.employee_id,nkey=normName(mt.employee_name);
+    const attr=agentAttr[nkey]||{tier:new Set(),vintage:'',city:'',exit:'0'};const revDays=revByName[nkey]||{};
+    const cells=allDates.map(d=>{if(d.getDay()===0)return {code:'H'};const iso=fmt(d);const row=byEmp[eid][iso];const revCell=revDays[iso];
+      if(!row&&!revCell)return {code:'X',future:iso>dmax,nodata:true};return evalCell(row,iso,revCell);});
+    const city=attr.city||(mt.work_location__filter||'');
+    return {id:eid,name:mt.employee_name,desig:BDE_DESIGS[(mt.designation__filter||'').toLowerCase()]||mt.designation__filter,
+      loc:mt.work_location__filter,city,tiers:[...attr.tier],vintage:attr.vintage||'',exit:attr.exit==='1',cells};});
   const months=[...new Set(allDates.map(d=>fmt(d).slice(0,7)))].sort();
   const fullMonth=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  return {
-    rangeStart:dmin, rangeEnd:dmax, dataCutoff:dmax, meetingEnforcedFrom:MEETING_ENFORCED_FROM,
-    generatedAt:new Date().toISOString(),
-    days, employees,
-    locations:[...new Set(employees.map(e=>e.loc).filter(Boolean))].sort(),
-    months:months.map(m=>({val:m,label:fullMonth[+m.split('-')[1]-1]+' '+m.split('-')[0]}))
-  };
+  const vintOrder=v=>{const n=v.replace('M','').replace('+','');return n===''?-1:(isNaN(+n)?98:+n);};
+  return {rangeStart:dmin,rangeEnd:dmax,dataCutoff:dmax,generatedAt:new Date().toISOString(),days,employees,
+    months:months.map(m=>({val:m,label:fullMonth[+m.split('-')[1]-1]+' '+m.split('-')[0]})),
+    fCities:[...new Set(employees.map(e=>e.city).filter(c=>c&&c!=='other'))].sort(),
+    fTiers:[...new Set([].concat(...employees.map(e=>e.tiers)))].sort(),
+    fVint:[...new Set(employees.map(e=>e.vintage).filter(Boolean))].sort((a,b)=>vintOrder(a)-vintOrder(b)),
+    fLic:[...new Set(revObjs.map(r=>r.lic_status).filter(Boolean))].sort()};
 }
 
-async function loadData(){
-  try{
-    const res=await fetch(SHEET_CSV+'&_='+Date.now(),{cache:'no-store'});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const text=await res.text();
-    DATA=buildDATA(csvToObjects(text));
-    initFromData(); render(); markUpdated(); setFootnote();
-  }catch(e){
-    document.getElementById('count').innerHTML=
-      '<span style="color:var(--absent)">Could not load sheet — '+e.message+'</span>';
-  }
-}
-function markUpdated(){
-  const el=document.getElementById('updated'); if(!el||!DATA.generatedAt) return;
-  el.textContent='Updated just now · auto-refreshes every 5 min';
-}
-// element handles (populated on load)
-const fromEl=document.getElementById('from'), toEl=document.getElementById('to');
-const monthSel=document.getElementById('month');
-const locSel=document.getElementById('loc');
-let fFrom='', fTo='', fMonth='', fLoc='', fStatus='', fQ='', fHideTrain=false;
+
+let fFrom='',fTo='',fMonth='',fStatus='',fQ='',fHideTrain=false,fShowExit=false;
+let fCity=new Set(),fTier=new Set(),fVint=new Set(),fLic=new Set();
+const fromEl=document.getElementById('from'),toEl=document.getElementById('to'),monthSel=document.getElementById('month');
 function daysInMonth(ym){const y=+ym.slice(0,4),m=+ym.slice(5,7);return new Date(y,m,0).getDate();}
 function isoOf(ym,d){return ym+'-'+String(d).padStart(2,'0');}
-// map: employee.id -> { iso -> cell } using the loaded (sparse) days
-function cellIndex(){
-  if(DATA._cidx) return DATA._cidx;
-  const idx={};
-  DATA.employees.forEach(e=>{const m={};e.cells.forEach((c,i)=>{m[DATA.days[i].iso]=c;});idx[e.id]=m;});
-  DATA._cidx=idx; return idx;
-}
-// Build the list of day-metas to render given current filters.
-// If a single month is selected -> full calendar month. Else -> the from..to slice from DATA.days.
-function visibleDayMetas(){
-  if(fMonth){
-    const n=daysInMonth(fMonth);
-    const dataIso=new Set(DATA.days.map(d=>d.iso));
-    const out=[];
-    for(let d=1;d<=n;d++){
-      const iso=isoOf(fMonth,d);
-      const dt=new Date(iso+'T00:00:00');
-      const dow=dt.toLocaleDateString('en-US',{weekday:'short'});
-      const mon=dt.toLocaleDateString('en-US',{month:'short'});
-      out.push({iso,d,mon,dow,sun:dt.getDay()===0,future:iso>DATA.dataCutoff,nodata:!dataIso.has(iso)});
-    }
-    return out;
-  }
-  return DATA.days.filter(dm=>dm.iso>=fFrom && dm.iso<=fTo);
-}
-function cellFor(empId,dm){
-  if(dm.sun) return {code:'H'};
-  const c=cellIndex()[empId][dm.iso];
-  if(c) return c;
-  return {code:'X',future:dm.future,nodata:true};
-}
-function initFromData(){
-  fFrom=DATA.rangeStart; fTo=DATA.rangeEnd;
-  fromEl.min=toEl.min=DATA.rangeStart; fromEl.max=toEl.max=DATA.rangeEnd;
-  fromEl.value=fFrom; toEl.value=fTo;
-  monthSel.length=1; DATA.months.forEach(m=>{const o=document.createElement('option');o.value=m.val;o.textContent=m.label;monthSel.appendChild(o)});
-  locSel.length=1; DATA.locations.forEach(l=>{const o=document.createElement('option');o.value=l;o.textContent=l[0].toUpperCase()+l.slice(1);locSel.appendChild(o)});
-}
-
-function inRange(iso){return iso>=fFrom && iso<=fTo;}
-function dayVisible(dm){
-  if(!inRange(dm.iso))return false;
-  if(fMonth && dm.iso.slice(0,7)!==fMonth)return false;
-  return true;
-}
-function empVisible(emp){
-  if(fLoc && emp.loc!==fLoc)return false;
+function cellIndex(){if(DATA._cidx)return DATA._cidx;const idx={};DATA.employees.forEach(e=>{const m={};e.cells.forEach((c,i)=>{m[DATA.days[i].iso]=c;});idx[e.id]=m;});DATA._cidx=idx;return idx;}
+function visibleDayMetas(){if(fMonth){const n=daysInMonth(fMonth);const dataIso=new Set(DATA.days.map(d=>d.iso));const out=[];
+    for(let d=1;d<=n;d++){const iso=isoOf(fMonth,d);const dt=new Date(iso+'T00:00:00');
+      out.push({iso,d,mon:dt.toLocaleDateString('en-US',{month:'short'}),dow:dt.toLocaleDateString('en-US',{weekday:'short'}),sun:dt.getDay()===0,future:iso>DATA.dataCutoff,nodata:!dataIso.has(iso)});}return out;}
+  return DATA.days.filter(dm=>dm.iso>=fFrom&&dm.iso<=fTo);}
+function cellFor(empId,dm){if(dm.sun)return {code:'H'};const c=cellIndex()[empId][dm.iso];return c||{code:'X',future:dm.future,nodata:true};}
+function cellRev(c){if(!c)return 0;if(fLic.size===0)return c.rev||0;if(!c.lic)return 0;let s=0;for(const k in c.lic){if(fLic.has(k))s+=c.lic[k];}return s;}
+function empVisible(emp){if(!fShowExit&&emp.exit)return false;
   if(fQ){const s=(emp.name+' '+emp.id).toLowerCase();if(!s.includes(fQ))return false;}
-  return true;
-}
-
+  if(fCity.size&&!fCity.has(emp.city))return false;
+  if(fVint.size&&!fVint.has(emp.vintage))return false;
+  if(fTier.size&&!emp.tiers.some(t=>fTier.has(t)))return false;return true;}
+function isActiveCell(c){return c&&c.code!=='H'&&c.code!=='T'&&c.code!=='X';}
 function fmtTime(min){if(min==null)return '—';let h=Math.floor(min/60),m=min%60;return (h<10?'0':'')+h+':'+(m<10?'0':'')+m;}
-
-function isActiveCell(c){
-  // active day = a real, non-Sunday day for this agent (exclude holiday/training/no-data/future)
-  return c && c.code!=='H' && c.code!=='T' && c.code!=='X';
-}
-function agentStats(emp, dms){
-  // over active (non-Sunday) days within current filters
-  let meetSum=0, actDays=0;          // avg meetings / active day
-  let fDoneSum=0;                     // avg followups done / active day
-  let fSetTot=0, fDoneOnSet=0;        // completion rate done/set on days where set>0
-  dms.forEach(dm=>{
-    if(dm.sun) return;
-    const c=cellFor(emp.id,dm);
-    if(!isActiveCell(c)) return;
-    actDays++;
-    meetSum += (c.mc||0);
-    fDoneSum += (c.fdone||0);
-    if((c.fset||0)>0){ fSetTot+=c.fset; fDoneOnSet+=(c.fdone||0); }
-  });
-  return {
-    actDays,
-    avgMeet: actDays? meetSum/actDays : 0,
-    avgFollowDone: actDays? fDoneSum/actDays : 0,
-    followRate: fSetTot? Math.round(100*fDoneOnSet/fSetTot) : null,
-    fSetTot, fDoneOnSet
-  };
-}
-function computeMetrics(){
-  const dms=visibleDayMetas();
-  let meetSum=0, actDays=0;                 // NEW: active = non-Sunday days
-  let signedMeetSum=0, signedActiveDays=0;  // days with >=1 meeting (for subline)
-  let loginSum=0,loginCnt=0;
-  let present=0,evalDays=0;
-  let fDoneSum=0, fSetTot=0, fDoneOnSet=0;
-  const activeAgents=new Set();
-  DATA.employees.forEach(emp=>{
-    if(!empVisible(emp))return;
-    dms.forEach(dm=>{
-      if(dm.sun)return;
-      const c=cellFor(emp.id,dm);
-      if(!isActiveCell(c))return;          // skip holiday/training/no-data
-      actDays++;
-      meetSum+=(c.mc||0);
-      fDoneSum+=(c.fdone||0);
-      if((c.fset||0)>0){fSetTot+=c.fset;fDoneOnSet+=(c.fdone||0);}
-      if(c.code==='P'||c.code==='A'){evalDays++; if(c.code==='P')present++;}
+function agentStats(emp,dms){let meetSum=0,actDays=0,fDone=0,fSet=0,rev=0;
+  dms.forEach(dm=>{if(dm.sun)return;const c=cellFor(emp.id,dm);rev+=cellRev(c);if(!isActiveCell(c))return;
+    actDays++;meetSum+=(c.mc||0);fDone+=(c.fdone||0);fSet+=(c.fset||0);});
+  return {actDays,avgMeet:actDays?meetSum/actDays:0,fDone,fSet,rev};}
+function computeMetrics(){const dms=visibleDayMetas();
+  let meetSum=0,actDays=0,signedMeet=0,signedDays=0,loginSum=0,loginCnt=0,present=0,evalDays=0,fDone=0,fSet=0,revTot=0;const agents=new Set();
+  DATA.employees.forEach(emp=>{if(!empVisible(emp))return;
+    dms.forEach(dm=>{if(dm.sun)return;const c=cellFor(emp.id,dm);revTot+=cellRev(c);if(!isActiveCell(c))return;
+      actDays++;meetSum+=(c.mc||0);fDone+=(c.fdone||0);fSet+=(c.fset||0);
+      if(c.code==='P'||c.code==='A'){evalDays++;if(c.code==='P')present++;}
       if(c.signinMin!=null){loginSum+=c.signinMin;loginCnt++;}
-      if((c.mc||0)>=1){signedMeetSum+=c.mc;signedActiveDays++;activeAgents.add(emp.id);}
-    });
-  });
-  return {
-    avgMeet: actDays? (meetSum/actDays):0,                 // over active (non-Sunday) days
-    avgMeetSignedOnly: signedActiveDays? (signedMeetSum/signedActiveDays):0,
-    activeAgentCount: activeAgents.size,
-    avgLogin: loginCnt? Math.round(loginSum/loginCnt):null,
-    presentRate: evalDays? Math.round(100*present/evalDays):0,
-    present, evalDays,
-    avgFollowDone: actDays? (fDoneSum/actDays):0,
-    followRate: fSetTot? Math.round(100*fDoneOnSet/fSetTot):null,
-    fDoneOnSet, fSetTot
-  };
-}
-function renderMetrics(){
-  const m=computeMetrics();
-  const frate = m.followRate==null ? '—' : m.followRate+'%';
+      if((c.mc||0)>=1){signedMeet+=c.mc;signedDays++;agents.add(emp.id);}});});
+  return {avgMeet:actDays?meetSum/actDays:0,avgMeetSigned:signedDays?signedMeet/signedDays:0,agentCount:agents.size,
+    avgLogin:loginCnt?Math.round(loginSum/loginCnt):null,presentRate:evalDays?Math.round(100*present/evalDays):0,
+    present,evalDays,fDone,fSet,revTot};}
+function renderMetrics(){const m=computeMetrics();
   document.getElementById('metrics').innerHTML=`
-    <div class="metric">
-      <div class="lbl">Avg meetings / active day</div>
-      <div class="big">${m.avgMeet.toFixed(1)}<span class="unit"> / 4</span></div>
-      <div class="sec">Days w/ ≥1 meet: ${m.avgMeetSignedOnly.toFixed(1)} · ${m.activeAgentCount} agents w/ ≥1 meet</div>
-      <div class="bar"><i style="width:${Math.min(100,m.avgMeet/4*100)}%"></i></div>
-    </div>
-    <div class="metric">
-      <div class="lbl">Avg login time</div>
-      <div class="big">${fmtTime(m.avgLogin)}</div>
-      <div class="sec">Excludes no-login days</div>
-    </div>
-    <div class="metric">
-      <div class="lbl">Followups / active day</div>
-      <div class="big">${m.avgFollowDone.toFixed(2)}</div>
-      <div class="sec">Completion: ${frate}${m.fSetTot?` (${m.fDoneOnSet}/${m.fSetTot} set)`:''}</div>
-    </div>
-    <div class="metric green">
-      <div class="lbl">Present rate</div>
-      <div class="big">${m.presentRate}<span class="unit">%</span></div>
-      <div class="sec">${m.present} present / ${m.evalDays} evaluated days</div>
-      <div class="bar"><i style="width:${m.presentRate}%"></i></div>
-    </div>`;
-}
+    <div class="metric green"><div class="lbl">Total revenue</div><div class="big">${inr(m.revTot)}</div><div class="sec">across visible agents & days</div></div>
+    <div class="metric"><div class="lbl">Avg meetings / active day</div><div class="big">${m.avgMeet.toFixed(1)}<span class="unit"> / 4</span></div><div class="sec">Days w/ ≥1 meet: ${m.avgMeetSigned.toFixed(1)} · ${m.agentCount} agents</div><div class="bar"><i style="width:${Math.min(100,m.avgMeet/4*100)}%"></i></div></div>
+    <div class="metric"><div class="lbl">Followups done / set</div><div class="big">${m.fDone}<span class="unit"> / ${m.fSet}</span></div><div class="sec">${m.fSet?Math.round(100*m.fDone/m.fSet):0}% completed</div></div>
+    <div class="metric"><div class="lbl">Avg login time</div><div class="big">${fmtTime(m.avgLogin)}</div><div class="sec">Excludes no-login days</div></div>
+    <div class="metric green"><div class="lbl">Present rate</div><div class="big">${m.presentRate}<span class="unit">%</span></div><div class="sec">${m.present} / ${m.evalDays} evaluated days</div><div class="bar"><i style="width:${m.presentRate}%"></i></div></div>`;}
 function critLine(l,ok,d){return `<div class="crit"><span>${l}</span><span class="${ok?'ok':'no'}">${d}</span></div>`;}
-function tipHTML(emp,dm,c){
-  let h=`<div class="t-h">${emp.name} · ${dm.d} ${dm.mon} (${dm.dow})</div>`;
+function tipHTML(emp,dm,c){let h=`<div class="t-h">${emp.name} · ${dm.d} ${dm.mon} (${dm.dow})</div>`;
+  if(emp.exit)h+=`<div class="note" style="color:#e0a04d">Exit manpower</div>`;
   if(c.code==='H')return h+'Holiday — Sunday off';
   if(c.code==='T')return h+'Training day';
-  if(c.code==='X')return h+'No data recorded';
-  if(c.nologin){h+=`<div class="crit"><span>No sign-in</span><span class="no">absent</span></div>`;h+=`<div class="note">BDE did not log in — counts as absent</div>`;return h;}
-  if(c.pre){h+=critLine('Sign-in',!!c.signin,c.signin||'no sign-in');h+=critLine('Meetings',c.mc>=1,(c.mc||0));h+=`<div class="note">Before meeting-check enforcement (from Jun 4) — source status</div>`;return h;}
-  h+=critLine('Meetings ≥4',c.m,(c.mc!=null?c.mc:0)+' / 4');
-  h+=critLine('Sign-in <11AM',c.s,c.signin||'no sign-in');
-  h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');
-  return h;
-}
-
-function render(){
-  if(!DATA) return;
-  renderMetrics();
-  const thead=document.querySelector('#grid thead'), tbody=document.querySelector('#grid tbody');
-  const dms=visibleDayMetas();
-  let prevMon=null;
-  let hr='<tr><th class="name-h">BDE</th>'+'<th class="stat-h s-m">Mtg<small>/act day</small></th>'+'<th class="stat-h s-f">F-up<small>/act day</small></th>';
+  if(c.code==='X'&&!(c.rev>0))return h+'No data recorded';
+  if(c.nologin){h+=`<div class="crit"><span>No sign-in</span><span class="no">absent</span></div>`;h+=`<div class="note">BDE did not log in — counts as absent</div>`;}
+  else if(c.pre){h+=critLine('Sign-in',!!c.signin,c.signin||'no sign-in');h+=critLine('Meetings',c.mc>=1,(c.mc||0));h+=`<div class="note">Before meeting-check enforcement</div>`;}
+  else if(c.code==='P'||c.code==='A'){h+=critLine('Meetings ≥4',c.m,(c.mc!=null?c.mc:0)+' / 4');h+=critLine('Sign-in <11AM',c.s,c.signin||'no sign-in');h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');}
+  const rv=cellRev(c);
+  if(rv>0){h+=`<div class="crit" style="border-top:1px solid #444;margin-top:6px;padding-top:5px"><span>Revenue</span><span class="ok">${inr(rv)}</span></div>`;
+    if(c.lic){for(const k in c.lic){if(fLic.size&&!fLic.has(k))continue;h+=`<div class="crit"><span style="opacity:.7">${k}</span><span style="opacity:.85">${inr(c.lic[k])}</span></div>`;}}}
+  return h;}
+function render(){if(!DATA)return;renderMetrics();
+  const thead=document.querySelector('#grid thead'),tbody=document.querySelector('#grid tbody');
+  const dms=visibleDayMetas();let prevMon=null;
+  let hr='<tr><th class="name-h">BDE</th><th class="stat-h s-rev">Rev<small>total</small></th><th class="stat-h s-m">Mtg<small>/act day</small></th><th class="stat-h s-f">F-up<small>done/set</small></th>';
   dms.forEach(d=>{const ms=d.iso.slice(0,7)!==prevMon;prevMon=d.iso.slice(0,7);
     hr+=`<th class="day${d.sun?' sun':''}${ms?' mstart':''}">${ms?`<span class="mo">${d.mon}</span>`:''}${d.d}<small>${d.dow}</small></th>`;});
-  hr+='</tr>'; thead.innerHTML=hr;
-
-  let shown=0, rows='';
-  DATA.employees.forEach(emp=>{
-    if(!empVisible(emp))return;
-    if(fStatus && !dms.some(dm=>cellFor(emp.id,dm).code===fStatus))return;
-    shown++;
-    const st=agentStats(emp,dms);
-    const mCol = st.actDays? st.avgMeet.toFixed(1) : '—';
-    const fCol = st.actDays? st.avgFollowDone.toFixed(2) : '—';
-    let r=`<tr><td class="name"><div class="emp-name">${emp.name}</div><div class="emp-meta">${emp.id} · ${emp.desig} · ${emp.loc}</div></td>`+`<td class="statcol s-m">${mCol}</td>`+`<td class="statcol s-f">${fCol}</td>`;
+  hr+='</tr>';thead.innerHTML=hr;
+  let shown=0,rows='';
+  DATA.employees.forEach(emp=>{if(!empVisible(emp))return;
+    if(fStatus&&!dms.some(dm=>cellFor(emp.id,dm).code===fStatus))return;shown++;
+    const st=agentStats(emp,dms);const exitTag=emp.exit?'<span class="tag exit">EXIT</span>':'';
+    let r=`<tr class="${emp.exit?'exitrow':''}"><td class="name"><div class="emp-name">${emp.name}${exitTag}</div><div class="emp-meta">${emp.id} · ${emp.desig} · ${emp.city||emp.loc}${emp.vintage?' · '+emp.vintage:''}</div></td>`
+      +`<td class="statcol s-rev">${st.rev?inr(st.rev):'—'}</td><td class="statcol s-m">${st.actDays?st.avgMeet.toFixed(1):'—'}</td><td class="statcol s-f">${st.fSet?(st.fDone+'/'+st.fSet):'—'}</td>`;
     prevMon=null;
-    dms.forEach((dm,k)=>{
-      const c=cellFor(emp.id,dm);
-      const ms=dm.iso.slice(0,7)!==prevMon; prevMon=dm.iso.slice(0,7);
-      let code=c.code;
-      if(fHideTrain && code==='T'){code='X';}
-      const dim=fStatus && code!==fStatus ? 'opacity:.26;':'';
+    dms.forEach(dm=>{const c=cellFor(emp.id,dm);const ms=dm.iso.slice(0,7)!==prevMon;prevMon=dm.iso.slice(0,7);
+      let code=c.code;if(fHideTrain&&code==='T'){code='X';}
+      const dim=fStatus&&code!==fStatus?'opacity:.26;':'';const rv=cellRev(c);
       let glyph=code==='P'?'P':code==='A'?(c.nologin?'∅':'A'):code==='H'?'·':code==='T'?'T':'';
-      const has=(code==='P'||code==='A')&&!c.pre?' has':'';
-      r+=`<td class="cell ${code}${c.pre?' pre':''}${c.nologin?' nologin':''}${ms?' mstart':''}${has}" style="${dim}" data-e="${emp.id}" data-iso="${dm.iso}"><span class="glyph">${glyph}</span></td>`;
-    });
-    r+='</tr>'; rows+=r;
-  });
+      let revline=rv>0?`<span class="rev">${inr(rv)}</span>`:'';
+      const has=(code==='P'||code==='A')&&!c.pre?' has':'';const exitcls=emp.exit?' exitcell':'';
+      r+=`<td class="cell ${code}${c.pre?' pre':''}${c.nologin?' nologin':''}${ms?' mstart':''}${has}${exitcls}${rv>0?' hasrev':''}" style="${dim}" data-e="${emp.id}" data-iso="${dm.iso}"><span class="glyph">${glyph}</span>${revline}</td>`;});
+    r+='</tr>';rows+=r;});
   tbody.innerHTML=rows||`<tr><td class="name" style="padding:24px;color:var(--ink-soft)">No BDEs match these filters.</td></tr>`;
-  document.getElementById('count').innerHTML=`<b>${shown}</b>/${DATA.employees.length} BDEs · ${dms.length} days`;
-}
-
-// tooltip
-const tip=document.getElementById('tip');
-const grid=document.getElementById('grid');
+  document.getElementById('count').innerHTML=`<b>${shown}</b>/${DATA.employees.length} BDEs · ${dms.length} days`;}
+const tip=document.getElementById('tip'),grid=document.getElementById('grid');
 grid.addEventListener('mouseover',ev=>{const td=ev.target.closest('td.cell');if(!td)return;
-  const emp=DATA.employees.find(x=>x.id===td.dataset.e), iso=td.dataset.iso;
-  const dm=visibleDayMetas().find(d=>d.iso===iso); const c=cellFor(emp.id,dm);
-  if(c.code==='X'&&(c.future||c.nodata))return; tip.innerHTML=tipHTML(emp,dm,c);tip.style.opacity='1';});
-grid.addEventListener('mousemove',ev=>{if(tip.style.opacity!=='1')return;
-  let x=ev.clientX+14,y=ev.clientY+14;const r=tip.getBoundingClientRect();
-  if(x+r.width>innerWidth)x=ev.clientX-r.width-14; if(y+r.height>innerHeight)y=ev.clientY-r.height-14;
-  tip.style.left=x+'px';tip.style.top=y+'px';});
+  const emp=DATA.employees.find(x=>x.id===td.dataset.e),iso=td.dataset.iso;
+  const dm=visibleDayMetas().find(d=>d.iso===iso);const c=cellFor(emp.id,dm);
+  if(c.code==='X'&&(c.future||c.nodata)&&!(c.rev>0))return;tip.innerHTML=tipHTML(emp,dm,c);tip.style.opacity='1';});
+grid.addEventListener('mousemove',ev=>{if(tip.style.opacity!=='1')return;let x=ev.clientX+14,y=ev.clientY+14;const r=tip.getBoundingClientRect();
+  if(x+r.width>innerWidth)x=ev.clientX-r.width-14;if(y+r.height>innerHeight)y=ev.clientY-r.height-14;tip.style.left=x+'px';tip.style.top=y+'px';});
 grid.addEventListener('mouseout',ev=>{if(!ev.relatedTarget||!ev.relatedTarget.closest('td.cell'))tip.style.opacity='0';});
-
-// control wiring
-fromEl.onchange=e=>{fFrom=e.target.value; if(fFrom>fTo){fTo=fFrom;toEl.value=fTo;} fMonth='';monthSel.value=''; render();};
-toEl.onchange=e=>{fTo=e.target.value; if(fTo<fFrom){fFrom=fTo;fromEl.value=fFrom;} fMonth='';monthSel.value=''; render();};
-monthSel.onchange=e=>{fMonth=e.target.value;
-  if(fMonth){ // full calendar month; sync date inputs to month bounds
-    const n=daysInMonth(fMonth); fFrom=isoOf(fMonth,1); fTo=isoOf(fMonth,n);
-    fromEl.value=fFrom; toEl.value=fTo;
-  } else { fFrom=DATA.rangeStart; fTo=DATA.rangeEnd; fromEl.value=fFrom; toEl.value=fTo; }
-  render();};
-locSel.onchange=e=>{fLoc=e.target.value;render();};
+function buildMulti(containerId,label,values,setRef,fmtLabel){const wrap=document.getElementById(containerId);if(!wrap)return;
+  wrap.innerHTML=`<button class="ms-btn" type="button">${label} <span class="ms-cnt"></span> ▾</button><div class="ms-pop"></div>`;
+  const btn=wrap.querySelector('.ms-btn'),pop=wrap.querySelector('.ms-pop'),cnt=wrap.querySelector('.ms-cnt');
+  pop.innerHTML=values.map(v=>`<label class="ms-opt"><input type="checkbox" value="${v}"> ${fmtLabel?fmtLabel(v):v}</label>`).join('')||'<div style="padding:8px;color:var(--ink-soft);font-size:12px">none</div>';
+  function upd(){cnt.textContent=setRef.size?`(${setRef.size})`:'';btn.classList.toggle('active',setRef.size>0);}
+  btn.onclick=()=>{pop.classList.toggle('open');};
+  pop.querySelectorAll('input').forEach(cb=>cb.onchange=()=>{if(cb.checked)setRef.add(cb.value);else setRef.delete(cb.value);upd();render();});
+  document.addEventListener('click',e=>{if(!wrap.contains(e.target))pop.classList.remove('open');});upd();}
+function initFromData(){fFrom=DATA.rangeStart;fTo=DATA.rangeEnd;fromEl.min=toEl.min=DATA.rangeStart;fromEl.max=toEl.max=DATA.rangeEnd;
+  fromEl.value=fFrom;toEl.value=fTo;monthSel.length=1;DATA.months.forEach(m=>{const o=document.createElement('option');o.value=m.val;o.textContent=m.label;monthSel.appendChild(o)});
+  buildMulti('msCity','City',DATA.fCities,fCity,v=>v[0].toUpperCase()+v.slice(1));
+  buildMulti('msTier','Tier',DATA.fTiers,fTier);buildMulti('msVint','Vintage',DATA.fVint,fVint);buildMulti('msLic','Lic status',DATA.fLic,fLic);}
+fromEl.onchange=e=>{fFrom=e.target.value;if(fFrom>fTo){fTo=fFrom;toEl.value=fTo;}fMonth='';monthSel.value='';render();};
+toEl.onchange=e=>{fTo=e.target.value;if(fTo<fFrom){fFrom=fTo;fromEl.value=fFrom;}fMonth='';monthSel.value='';render();};
+monthSel.onchange=e=>{fMonth=e.target.value;if(fMonth){const n=daysInMonth(fMonth);fFrom=isoOf(fMonth,1);fTo=isoOf(fMonth,n);fromEl.value=fFrom;toEl.value=fTo;}else{fFrom=DATA.rangeStart;fTo=DATA.rangeEnd;fromEl.value=fFrom;toEl.value=fTo;}render();};
 document.getElementById('q').oninput=e=>{fQ=e.target.value.trim().toLowerCase();render();};
 document.getElementById('hideTrain').onchange=e=>{fHideTrain=e.target.checked;render();};
-document.getElementById('statusSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
-  [...e.currentTarget.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');fStatus=b.dataset.f;render();});
-
+document.getElementById('showExit').onchange=e=>{fShowExit=e.target.checked;render();};
+document.getElementById('statusSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;[...e.currentTarget.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');fStatus=b.dataset.f;render();});
 document.getElementById('legend').innerHTML=`
   <div class="key"><span class="sw" style="background:var(--present-bg);border-color:var(--present-line)"></span> P · Present</div>
-  <div class="key"><span class="sw" style="background:var(--absent-bg);border-color:var(--absent-line)"></span> A · Absent (criteria fail)</div>
-  <div class="key"><span class="sw" style="background:repeating-linear-gradient(45deg,var(--absent-bg),var(--absent-bg) 3px,#f6d3cc 3px,#f6d3cc 6px)"></span> ∅ · Absent — no sign-in</div>
+  <div class="key"><span class="sw" style="background:var(--absent-bg);border-color:var(--absent-line)"></span> A · Absent</div>
+  <div class="key"><span class="sw" style="background:repeating-linear-gradient(45deg,var(--absent-bg),var(--absent-bg) 3px,#f6d3cc 3px,#f6d3cc 6px)"></span> ∅ · No sign-in</div>
   <div class="key"><span class="sw" style="background:var(--train-bg)"></span> T · Training</div>
-  <div class="key"><span class="sw" style="background:var(--hold-bg)"></span> · Holiday (Sunday)</div>
-  <div class="key"><span class="sw" style="background:var(--present-bg);box-shadow:inset 0 0 0 2px var(--present-line)"></span> outlined = before meeting-check enforcement</div>`;
-function setFootnote(){ if(!DATA) return; document.getElementById('footnote').textContent=
-  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. The meeting check (4+) is enforced from Jun 4; earlier days reflect source status and are shown outlined. Metrics cover Mon–Sat working days over the selected range/filters: average meetings counts signed-in days (and separately days with ≥1 meeting), average login excludes no-login days, present rate = present ÷ evaluated days. Training days are excluded from metrics.`; }
+  <div class="key"><span class="sw" style="background:var(--hold-bg)"></span> · Sunday</div>
+  <div class="key"><span class="sw" style="background:var(--exit-bg);border-color:var(--exit-line)"></span> Exit manpower</div>
+  <div class="key"><span style="font-family:'JetBrains Mono';color:var(--present);font-weight:600">₹</span> daily revenue in cell</div>`;
+function setFootnote(){if(!DATA)return;document.getElementById('footnote').textContent=`Attendance ${DATA.rangeStart} to ${DATA.rangeEnd}; revenue summed per day from license sales. Active day = non-Sunday. Meeting check enforced from Jun 4. City "other" excluded from filters. Lic-status filter scopes revenue shown. Exit manpower hidden unless toggled.`;}
+const REFRESH_MS = 5*60*1000;
+async function fetchCSV(url){const res=await fetch(url+'&_='+Date.now(),{cache:'no-store'});if(!res.ok)throw new Error('HTTP '+res.status);return res.text();}
+async function boot(){
+  try{
+    const [att,rev]=await Promise.all([fetchCSV(ATT_CSV_URL),fetchCSV(REV_CSV_URL)]);
+    DATA=buildDATA(csvToObjects(att),csvToObjects(rev));
+    initFromData();render();setFootnote();markUpdated();
+  }catch(e){
+    document.getElementById('count').innerHTML='<span style="color:var(--absent)">Could not load sheets — '+e.message+'</span>';
+  }
+}
+function markUpdated(){const el=document.getElementById('updated');if(!el)return;el.style.display='block';el.style.width='100%';el.style.fontSize='11px';el.style.color='var(--ink-soft)';el.style.marginTop='4px';el.textContent='Updated just now · auto-refreshes every 5 min';}
+boot();
+setInterval(boot, REFRESH_MS);
 
-loadData();
-setInterval(loadData, REFRESH_MS);
 </script>
 </body>
 </html>
