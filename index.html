@@ -63,6 +63,16 @@ thead th.mstart{border-left:2px solid var(--accent)}
 th.name-h,td.name{position:sticky;left:0;z-index:15;background:var(--card);text-align:left;padding-left:16px;min-width:228px}
 td.name{background:var(--card);border-bottom:1px solid var(--line)}
 thead th.name-h{z-index:30;top:0;left:0;background:var(--paper)}
+th.stat-h,td.statcol{position:sticky;z-index:14;background:var(--card);text-align:center;min-width:62px;width:62px;font-family:'JetBrains Mono',monospace;font-size:12px;border-bottom:1px solid var(--line);border-left:1px solid var(--line)}
+td.statcol{color:var(--ink)}
+th.stat-h{z-index:24;top:0;background:var(--paper);color:var(--ink-soft);font-weight:600;font-size:10.5px;line-height:1.15;padding:4px 4px}
+th.stat-h small,td.statcol small{display:block;font-size:9px;color:var(--ink-soft);font-weight:500}
+.statcol.s-m{left:228px}
+.statcol.s-f{left:290px}
+th.stat-h.s-m{left:228px}
+th.stat-h.s-f{left:290px}
+td.statcol.s-f{border-right:2px solid var(--line-strong)}
+th.stat-h.s-f{border-right:2px solid var(--line-strong)}
 .emp-name{font-weight:600;font-size:14.5px}
 .emp-meta{font-size:11.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;margin-top:1px}
 td.cell{width:34px;height:46px;text-align:center;border-bottom:1px solid var(--line);border-left:1px solid var(--line);position:relative;padding:0}
@@ -320,47 +330,86 @@ function empVisible(emp){
 
 function fmtTime(min){if(min==null)return '—';let h=Math.floor(min/60),m=min%60;return (h<10?'0':'')+h+':'+(m<10?'0':'')+m;}
 
+function isActiveCell(c){
+  // active day = a real, non-Sunday day for this agent (exclude holiday/training/no-data/future)
+  return c && c.code!=='H' && c.code!=='T' && c.code!=='X';
+}
+function agentStats(emp, dms){
+  // over active (non-Sunday) days within current filters
+  let meetSum=0, actDays=0;          // avg meetings / active day
+  let fDoneSum=0;                     // avg followups done / active day
+  let fSetTot=0, fDoneOnSet=0;        // completion rate done/set on days where set>0
+  dms.forEach(dm=>{
+    if(dm.sun) return;
+    const c=cellFor(emp.id,dm);
+    if(!isActiveCell(c)) return;
+    actDays++;
+    meetSum += (c.mc||0);
+    fDoneSum += (c.fdone||0);
+    if((c.fset||0)>0){ fSetTot+=c.fset; fDoneOnSet+=(c.fdone||0); }
+  });
+  return {
+    actDays,
+    avgMeet: actDays? meetSum/actDays : 0,
+    avgFollowDone: actDays? fDoneSum/actDays : 0,
+    followRate: fSetTot? Math.round(100*fDoneOnSet/fSetTot) : null,
+    fSetTot, fDoneOnSet
+  };
+}
 function computeMetrics(){
   const dms=visibleDayMetas();
-  let mSum=0,mDays=0, mActiveSum=0,mActiveDays=0, loginSum=0,loginCnt=0, present=0,evalDays=0;
+  let meetSum=0, actDays=0;                 // NEW: active = non-Sunday days
+  let signedMeetSum=0, signedActiveDays=0;  // days with >=1 meeting (for subline)
+  let loginSum=0,loginCnt=0;
+  let present=0,evalDays=0;
+  let fDoneSum=0, fSetTot=0, fDoneOnSet=0;
   const activeAgents=new Set();
   DATA.employees.forEach(emp=>{
     if(!empVisible(emp))return;
     dms.forEach(dm=>{
       if(dm.sun)return;
       const c=cellFor(emp.id,dm);
-      if(c.code==='H'||c.code==='X'||c.code==='T')return;
+      if(!isActiveCell(c))return;          // skip holiday/training/no-data
+      actDays++;
+      meetSum+=(c.mc||0);
+      fDoneSum+=(c.fdone||0);
+      if((c.fset||0)>0){fSetTot+=c.fset;fDoneOnSet+=(c.fdone||0);}
       if(c.code==='P'||c.code==='A'){evalDays++; if(c.code==='P')present++;}
       if(c.signinMin!=null){loginSum+=c.signinMin;loginCnt++;}
-      if(c.signinMin!=null){
-        mSum+=(c.mc||0); mDays++;
-        if((c.mc||0)>=1){mActiveSum+=c.mc;mActiveDays++;activeAgents.add(emp.id);}
-      }
+      if((c.mc||0)>=1){signedMeetSum+=c.mc;signedActiveDays++;activeAgents.add(emp.id);}
     });
   });
   return {
-    avgMeet: mDays? (mSum/mDays):0,
-    avgMeetActive: mActiveDays? (mActiveSum/mActiveDays):0,
+    avgMeet: actDays? (meetSum/actDays):0,                 // over active (non-Sunday) days
+    avgMeetSignedOnly: signedActiveDays? (signedMeetSum/signedActiveDays):0,
     activeAgentCount: activeAgents.size,
     avgLogin: loginCnt? Math.round(loginSum/loginCnt):null,
     presentRate: evalDays? Math.round(100*present/evalDays):0,
-    present, evalDays
+    present, evalDays,
+    avgFollowDone: actDays? (fDoneSum/actDays):0,
+    followRate: fSetTot? Math.round(100*fDoneOnSet/fSetTot):null,
+    fDoneOnSet, fSetTot
   };
 }
-
 function renderMetrics(){
   const m=computeMetrics();
+  const frate = m.followRate==null ? '—' : m.followRate+'%';
   document.getElementById('metrics').innerHTML=`
     <div class="metric">
-      <div class="lbl">Avg meetings / day</div>
+      <div class="lbl">Avg meetings / active day</div>
       <div class="big">${m.avgMeet.toFixed(1)}<span class="unit"> / 4</span></div>
-      <div class="sec">Active days only: ${m.avgMeetActive.toFixed(1)} · ${m.activeAgentCount} agents w/ ≥1 meet</div>
+      <div class="sec">Days w/ ≥1 meet: ${m.avgMeetSignedOnly.toFixed(1)} · ${m.activeAgentCount} agents w/ ≥1 meet</div>
       <div class="bar"><i style="width:${Math.min(100,m.avgMeet/4*100)}%"></i></div>
     </div>
     <div class="metric">
       <div class="lbl">Avg login time</div>
       <div class="big">${fmtTime(m.avgLogin)}</div>
       <div class="sec">Excludes no-login days</div>
+    </div>
+    <div class="metric">
+      <div class="lbl">Followups / active day</div>
+      <div class="big">${m.avgFollowDone.toFixed(2)}</div>
+      <div class="sec">Completion: ${frate}${m.fSetTot?` (${m.fDoneOnSet}/${m.fSetTot} set)`:''}</div>
     </div>
     <div class="metric green">
       <div class="lbl">Present rate</div>
@@ -369,7 +418,6 @@ function renderMetrics(){
       <div class="bar"><i style="width:${m.presentRate}%"></i></div>
     </div>`;
 }
-
 function critLine(l,ok,d){return `<div class="crit"><span>${l}</span><span class="${ok?'ok':'no'}">${d}</span></div>`;}
 function tipHTML(emp,dm,c){
   let h=`<div class="t-h">${emp.name} · ${dm.d} ${dm.mon} (${dm.dow})</div>`;
@@ -390,7 +438,7 @@ function render(){
   const thead=document.querySelector('#grid thead'), tbody=document.querySelector('#grid tbody');
   const dms=visibleDayMetas();
   let prevMon=null;
-  let hr='<tr><th class="name-h">BDE</th>';
+  let hr='<tr><th class="name-h">BDE</th>'+'<th class="stat-h s-m">Mtg<small>/act day</small></th>'+'<th class="stat-h s-f">F-up<small>/act day</small></th>';
   dms.forEach(d=>{const ms=d.iso.slice(0,7)!==prevMon;prevMon=d.iso.slice(0,7);
     hr+=`<th class="day${d.sun?' sun':''}${ms?' mstart':''}">${ms?`<span class="mo">${d.mon}</span>`:''}${d.d}<small>${d.dow}</small></th>`;});
   hr+='</tr>'; thead.innerHTML=hr;
@@ -400,7 +448,10 @@ function render(){
     if(!empVisible(emp))return;
     if(fStatus && !dms.some(dm=>cellFor(emp.id,dm).code===fStatus))return;
     shown++;
-    let r=`<tr><td class="name"><div class="emp-name">${emp.name}</div><div class="emp-meta">${emp.id} · ${emp.desig} · ${emp.loc}</div></td>`;
+    const st=agentStats(emp,dms);
+    const mCol = st.actDays? st.avgMeet.toFixed(1) : '—';
+    const fCol = st.actDays? st.avgFollowDone.toFixed(2) : '—';
+    let r=`<tr><td class="name"><div class="emp-name">${emp.name}</div><div class="emp-meta">${emp.id} · ${emp.desig} · ${emp.loc}</div></td>`+`<td class="statcol s-m">${mCol}</td>`+`<td class="statcol s-f">${fCol}</td>`;
     prevMon=null;
     dms.forEach((dm,k)=>{
       const c=cellFor(emp.id,dm);
