@@ -104,7 +104,7 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
 <header>
   <div class="eyebrow">FST · Field Sales Team</div>
   <h1>BDE Attendance <em>Tracker</em></h1>
-  <p class="sub">Daily present/absent by BDE. Present = 4+ validated meetings, sign-in before 11 AM, and followups cleared. Striped (∅) = no sign-in. Metrics and grid update live with the filters below.</p>
+  <p class="sub">Daily present/absent by BDE. Present = meeting criteria met (per source status), sign-in before 11 AM, and followups cleared. Striped (∅) = no sign-in. Metrics and grid update live with the filters below.</p>
 </header>
 
 <div class="metrics" id="metrics"></div>
@@ -208,7 +208,7 @@ function evaluate(row, isoD){
     return out;
   }
   const s=(!noLogin)&&(smin<11*60);
-  const m=mc>=4;
+  const m=status==='active';
   const fsN=num(row.followup_set), fdN=num(row.followups_done);
   let f=true,fset=0,fdone=0;
   if(fsN!=null&&fdN!=null&&fsN>0){fset=fsN;fdone=fdN;f=fdone>=fset;}
@@ -426,7 +426,7 @@ function tipHTML(emp,dm,c){
   if(c.code==='X')return h+'No data recorded';
   if(c.nologin){h+=`<div class="crit"><span>No sign-in</span><span class="no">absent</span></div>`;h+=`<div class="note">BDE did not log in — counts as absent</div>`;return h;}
   if(c.pre){h+=critLine('Sign-in',!!c.signin,c.signin||'no sign-in');h+=critLine('Meetings',c.mc>=1,(c.mc||0));h+=`<div class="note">Before meeting-check enforcement (from Jun 4) — source status</div>`;return h;}
-  h+=critLine('Meetings ≥4',c.m,(c.mc!=null?c.mc:0)+' / 4');
+  h+=critLine('Meeting criteria (source)',c.m,(c.mc!=null?c.mc:0)+' · '+(c.m?'active':'inactive'));
   h+=critLine('Sign-in <11AM',c.s,c.signin||'no sign-in');
   h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');
   return h;
@@ -505,7 +505,7 @@ document.getElementById('legend').innerHTML=`
   <div class="key"><span class="sw" style="background:var(--hold-bg)"></span> · Holiday (Sunday)</div>
   <div class="key"><span class="sw" style="background:var(--present-bg);box-shadow:inset 0 0 0 2px var(--present-line)"></span> outlined = before meeting-check enforcement</div>`;
 function setFootnote(){ if(!DATA) return; document.getElementById('footnote').textContent=
-  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. The meeting check (4+) is enforced from Jun 4; earlier days reflect source status and are shown outlined. Metrics cover Mon–Sat working days over the selected range/filters: average meetings counts signed-in days (and separately days with ≥1 meeting), average login excludes no-login days, present rate = present ÷ evaluated days. Training days are excluded from metrics.`; }
+  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. From Jun 4, the meeting criterion is taken directly from the source status field (active/inactive) rather than a hardcoded count threshold, so it auto-adjusts if the upstream threshold changes; earlier days reflect source status and are shown outlined. Metrics cover Mon–Sat working days over the selected range/filters: average meetings counts signed-in days (and separately days with ≥1 meeting), average login excludes no-login days, present rate = present ÷ evaluated days. Training days are excluded from metrics.`; }
 
 loadData();
 setInterval(loadData, REFRESH_MS);
