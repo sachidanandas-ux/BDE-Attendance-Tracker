@@ -25,6 +25,7 @@ header{padding:32px 32px 20px;border-bottom:1px solid var(--line)}
 h1{font-family:'Fraunces',serif;font-weight:500;font-size:clamp(26px,4vw,40px);letter-spacing:-.01em;line-height:1.02}
 h1 em{font-style:italic;color:var(--ink-soft)}
 .sub{margin-top:10px;color:var(--ink-soft);max-width:640px;font-size:13.5px}
+.offline-badge{display:inline-block;background:var(--train-bg);color:var(--train);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:5px;margin-left:10px;vertical-align:middle}
 
 .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;padding:20px 32px;border-bottom:1px solid var(--line)}
 .metric{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
@@ -115,7 +116,7 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
   <div class="grp"><label>Month</label>
     <select id="month"><option value="">All</option></select></div>
   <div class="grp"><label>Location</label>
-    <select id="loc"><option value="">All</option></select></div>
+    <div class="seg" id="locSeg"></div></div>
   <div class="seg" id="statusSeg">
     <button data-f="" class="on">All</button>
     <button data-f="A">Absent</button>
@@ -134,11 +135,14 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
 <div id="tip"></div>
 
 <script>
-let DATA = null;
 const SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIZrKuTJUdzshNzKht_KW70twLDExz7qC__iia1oYPE68KTeKlmcTrjiHjutOfsmlMfkuZTc1vX1af/pub?gid=316852425&single=true&output=csv";
 const REFRESH_MS = 5*60*1000;
+
+
+
+let DATA = null;
 const MEETING_ENFORCED_FROM = "2026-06-04";
-const MEETING_THRESHOLD_CHANGE_FROM = "2026-07-01"; // meet req drops 4 -> 3
+const MEETING_THRESHOLD_CHANGE_FROM = "2026-07-01";
 const BDE_DESIGS = {
   "senior business development executive":"Sr BDE",
   "business development executive":"BDE",
@@ -175,12 +179,14 @@ function csvToObjects(text){
 function timeToMin(v){
   if(!v) return null;
   let s=String(v).trim();
-  // try ISO timestamp
   let dt=new Date(s.replace(' ','T'));
   if(!isNaN(dt) && /\d{4}-\d{2}-\d{2}/.test(s)) return dt.getHours()*60+dt.getMinutes();
-  // try HH:MM[:SS] or h:mm AM/PM
   let m=s.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?/i);
   if(m){let h=+m[1],mi=+m[2];const ap=(m[3]||'').toLowerCase();
+    if(ap==='pm'&&h<12)h+=12; if(ap==='am'&&h===12)h=0; return h*60+mi;}
+  // Handle M/D/YYYY H:MM:SS format
+  m=s.match(/\d+\/\d+\/\d+\s+(\d{1,2}):(\d{2}):?(\d{2})?\s*(am|pm)?/i);
+  if(m){let h=+m[1],mi=+m[2];const ap=(m[4]||'').toLowerCase();
     if(ap==='pm'&&h<12)h+=12; if(ap==='am'&&h===12)h=0; return h*60+mi;}
   return null;
 }
@@ -223,7 +229,7 @@ function buildDATA(objs){
   const rows=objs.filter(r=>BDE_DESIGS[(r.designation__filter||'').toLowerCase()]);
   rows.forEach(r=>r._iso=isoDate(r.date));
   const valid=rows.filter(r=>r._iso);
-  if(!valid.length) throw new Error('No BDE rows with valid dates found in sheet');
+  if(!valid.length) throw new Error('No BDE rows with valid dates found');
   const isos=valid.map(r=>r._iso).sort();
   const dmin=isos[0], dmax=isos[isos.length-1];
   const start=new Date(dmin+'T00:00:00'), end=new Date(dmax+'T00:00:00');
@@ -272,22 +278,19 @@ function markUpdated(){
   const el=document.getElementById('updated'); if(!el||!DATA.generatedAt) return;
   el.textContent='Updated just now · auto-refreshes every 5 min';
 }
-// element handles (populated on load)
+
 const fromEl=document.getElementById('from'), toEl=document.getElementById('to');
 const monthSel=document.getElementById('month');
-const locSel=document.getElementById('loc');
-let fFrom='', fTo='', fMonth='', fLoc='', fStatus='', fQ='', fHideTrain=false;
+const locSeg=document.getElementById('locSeg');
+let fFrom='', fTo='', fMonth='', fLocs=[], fStatus='', fQ='', fHideTrain=false;
 function daysInMonth(ym){const y=+ym.slice(0,4),m=+ym.slice(5,7);return new Date(y,m,0).getDate();}
 function isoOf(ym,d){return ym+'-'+String(d).padStart(2,'0');}
-// map: employee.id -> { iso -> cell } using the loaded (sparse) days
 function cellIndex(){
   if(DATA._cidx) return DATA._cidx;
   const idx={};
   DATA.employees.forEach(e=>{const m={};e.cells.forEach((c,i)=>{m[DATA.days[i].iso]=c;});idx[e.id]=m;});
   DATA._cidx=idx; return idx;
 }
-// Build the list of day-metas to render given current filters.
-// If a single month is selected -> full calendar month. Else -> the from..to slice from DATA.days.
 function visibleDayMetas(){
   if(fMonth){
     const n=daysInMonth(fMonth);
@@ -315,7 +318,21 @@ function initFromData(){
   fromEl.min=toEl.min=DATA.rangeStart; fromEl.max=toEl.max=DATA.rangeEnd;
   fromEl.value=fFrom; toEl.value=fTo;
   monthSel.length=1; DATA.months.forEach(m=>{const o=document.createElement('option');o.value=m.val;o.textContent=m.label;monthSel.appendChild(o)});
-  locSel.length=1; DATA.locations.forEach(l=>{const o=document.createElement('option');o.value=l;o.textContent=l[0].toUpperCase()+l.slice(1);locSel.appendChild(o)});
+  // Build multi-select location toggle buttons
+  locSeg.innerHTML='<button data-loc="" class="on">All</button>'+DATA.locations.map(l=>`<button data-loc="${l}">${l[0].toUpperCase()+l.slice(1)}</button>`).join('');
+  locSeg.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+    const loc=b.dataset.loc;
+    if(loc===''){// "All" clicked — clear everything
+      fLocs=[];[...locSeg.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    }else{
+      // Toggle this city
+      locSeg.querySelector('[data-loc=""]').classList.remove('on');
+      b.classList.toggle('on');
+      fLocs=[...locSeg.querySelectorAll('button.on')].map(x=>x.dataset.loc).filter(Boolean);
+      if(!fLocs.length){fLocs=[];locSeg.querySelector('[data-loc=""]').classList.add('on');}
+    }
+    render();
+  });
 }
 
 function inRange(iso){return iso>=fFrom && iso<=fTo;}
@@ -325,22 +342,36 @@ function dayVisible(dm){
   return true;
 }
 function empVisible(emp){
-  if(fLoc && emp.loc!==fLoc)return false;
+  if(fLocs.length && !fLocs.includes(emp.loc))return false;
   if(fQ){const s=(emp.name+' '+emp.id).toLowerCase();if(!s.includes(fQ))return false;}
   return true;
+}
+// Check if employee has ANY real data (P/A/T) in visible range — if all X/H, they're exited/empty
+function empHasData(emp, dms){
+  return dms.some(dm=>{if(dm.sun)return false; const c=cellFor(emp.id,dm); return c.code!=='X';});
+}
+// Check if employee has any non-training active day in visible range
+function empHasNonTraining(emp, dms){
+  return dms.some(dm=>{if(dm.sun)return false; const c=cellFor(emp.id,dm); return c.code==='P'||c.code==='A';});
+}
+// Determine effective meeting threshold for the visible date range
+function effectiveThreshold(dms){
+  let has3=false, has4=false;
+  dms.forEach(dm=>{if(!dm.sun){ if(dm.iso>=MEETING_THRESHOLD_CHANGE_FROM) has3=true; else has4=true; }});
+  if(has3 && has4) return {val:null, label:'3–4'};
+  if(has3) return {val:3, label:'3'};
+  return {val:4, label:'4'};
 }
 
 function fmtTime(min){if(min==null)return '—';let h=Math.floor(min/60),m=min%60;return (h<10?'0':'')+h+':'+(m<10?'0':'')+m;}
 
 function isActiveCell(c){
-  // active day = a real, non-Sunday day for this agent (exclude holiday/training/no-data/future)
   return c && c.code!=='H' && c.code!=='T' && c.code!=='X';
 }
 function agentStats(emp, dms){
-  // over active (non-Sunday) days within current filters
-  let meetSum=0, actDays=0;          // avg meetings / active day
-  let fDoneSum=0;                     // avg followups done / active day
-  let fSetTot=0, fDoneOnSet=0;        // completion rate done/set on days where set>0
+  let meetSum=0, actDays=0;
+  let fDoneSum=0;
+  let fSetTot=0, fDoneOnSet=0;
   dms.forEach(dm=>{
     if(dm.sun) return;
     const c=cellFor(emp.id,dm);
@@ -360,8 +391,8 @@ function agentStats(emp, dms){
 }
 function computeMetrics(){
   const dms=visibleDayMetas();
-  let meetSum=0, actDays=0;                 // NEW: active = non-Sunday days
-  let signedMeetSum=0, signedActiveDays=0;  // days with >=1 meeting (for subline)
+  let meetSum=0, actDays=0;
+  let signedMeetSum=0, signedActiveDays=0;
   let loginSum=0,loginCnt=0;
   let present=0,evalDays=0;
   let fDoneSum=0, fSetTot=0, fDoneOnSet=0;
@@ -371,7 +402,7 @@ function computeMetrics(){
     dms.forEach(dm=>{
       if(dm.sun)return;
       const c=cellFor(emp.id,dm);
-      if(!isActiveCell(c))return;          // skip holiday/training/no-data
+      if(!isActiveCell(c))return;
       actDays++;
       meetSum+=(c.mc||0);
       fDoneSum+=(c.fdone||0);
@@ -382,7 +413,7 @@ function computeMetrics(){
     });
   });
   return {
-    avgMeet: actDays? (meetSum/actDays):0,                 // over active (non-Sunday) days
+    avgMeet: actDays? (meetSum/actDays):0,
     avgMeetSignedOnly: signedActiveDays? (signedMeetSum/signedActiveDays):0,
     activeAgentCount: activeAgents.size,
     avgLogin: loginCnt? Math.round(loginSum/loginCnt):null,
@@ -395,13 +426,16 @@ function computeMetrics(){
 }
 function renderMetrics(){
   const m=computeMetrics();
+  const dms=visibleDayMetas();
+  const thresh=effectiveThreshold(dms);
+  const threshDenom=thresh.val||4; // use 4 as fallback for mixed range bar calc
   const frate = m.followRate==null ? '—' : m.followRate+'%';
   document.getElementById('metrics').innerHTML=`
     <div class="metric">
       <div class="lbl">Avg meetings / active day</div>
-      <div class="big">${m.avgMeet.toFixed(1)}<span class="unit"> / 4</span></div>
+      <div class="big">${m.avgMeet.toFixed(1)}<span class="unit"> / ${thresh.label}</span></div>
       <div class="sec">Days w/ ≥1 meet: ${m.avgMeetSignedOnly.toFixed(1)} · ${m.activeAgentCount} agents w/ ≥1 meet</div>
-      <div class="bar"><i style="width:${Math.min(100,m.avgMeet/4*100)}%"></i></div>
+      <div class="bar"><i style="width:${Math.min(100,m.avgMeet/threshDenom*100)}%"></i></div>
     </div>
     <div class="metric">
       <div class="lbl">Avg login time</div>
@@ -448,6 +482,10 @@ function render(){
   let shown=0, rows='';
   DATA.employees.forEach(emp=>{
     if(!empVisible(emp))return;
+    // Skip employees with zero data in visible range (exited / not yet joined)
+    if(!empHasData(emp, dms))return;
+    // Hide Training: skip rows that are training-only (no P/A days)
+    if(fHideTrain && !empHasNonTraining(emp, dms))return;
     if(fStatus && !dms.some(dm=>cellFor(emp.id,dm).code===fStatus))return;
     shown++;
     const st=agentStats(emp,dms);
@@ -459,7 +497,6 @@ function render(){
       const c=cellFor(emp.id,dm);
       const ms=dm.iso.slice(0,7)!==prevMon; prevMon=dm.iso.slice(0,7);
       let code=c.code;
-      if(fHideTrain && code==='T'){code='X';}
       const dim=fStatus && code!==fStatus ? 'opacity:.26;':'';
       let glyph=code==='P'?'P':code==='A'?(c.nologin?'∅':'A'):code==='H'?'·':code==='T'?'T':'';
       const has=(code==='P'||code==='A')&&!c.pre?' has':'';
@@ -474,10 +511,10 @@ function render(){
 // tooltip
 const tip=document.getElementById('tip');
 const grid=document.getElementById('grid');
-grid.addEventListener('mouseover',ev=>{const td=ev.target.closest('td.cell');if(!td)return;
+grid.addEventListener('mouseover',ev=>{const td=ev.target.closest('td.cell');if(!td){tip.style.opacity='0';return;}
   const emp=DATA.employees.find(x=>x.id===td.dataset.e), iso=td.dataset.iso;
   const dm=visibleDayMetas().find(d=>d.iso===iso); const c=cellFor(emp.id,dm);
-  if(c.code==='X'&&(c.future||c.nodata))return; tip.innerHTML=tipHTML(emp,dm,c);tip.style.opacity='1';});
+  if(c.code==='X'){tip.style.opacity='0';return;} tip.innerHTML=tipHTML(emp,dm,c);tip.style.opacity='1';});
 grid.addEventListener('mousemove',ev=>{if(tip.style.opacity!=='1')return;
   let x=ev.clientX+14,y=ev.clientY+14;const r=tip.getBoundingClientRect();
   if(x+r.width>innerWidth)x=ev.clientX-r.width-14; if(y+r.height>innerHeight)y=ev.clientY-r.height-14;
@@ -488,12 +525,10 @@ grid.addEventListener('mouseout',ev=>{if(!ev.relatedTarget||!ev.relatedTarget.cl
 fromEl.onchange=e=>{fFrom=e.target.value; if(fFrom>fTo){fTo=fFrom;toEl.value=fTo;} fMonth='';monthSel.value=''; render();};
 toEl.onchange=e=>{fTo=e.target.value; if(fTo<fFrom){fFrom=fTo;fromEl.value=fFrom;} fMonth='';monthSel.value=''; render();};
 monthSel.onchange=e=>{fMonth=e.target.value;
-  if(fMonth){ // full calendar month; sync date inputs to month bounds
-    const n=daysInMonth(fMonth); fFrom=isoOf(fMonth,1); fTo=isoOf(fMonth,n);
+  if(fMonth){ const n=daysInMonth(fMonth); fFrom=isoOf(fMonth,1); fTo=isoOf(fMonth,n);
     fromEl.value=fFrom; toEl.value=fTo;
   } else { fFrom=DATA.rangeStart; fTo=DATA.rangeEnd; fromEl.value=fFrom; toEl.value=fTo; }
   render();};
-locSel.onchange=e=>{fLoc=e.target.value;render();};
 document.getElementById('q').oninput=e=>{fQ=e.target.value.trim().toLowerCase();render();};
 document.getElementById('hideTrain').onchange=e=>{fHideTrain=e.target.checked;render();};
 document.getElementById('statusSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
@@ -507,7 +542,7 @@ document.getElementById('legend').innerHTML=`
   <div class="key"><span class="sw" style="background:var(--hold-bg)"></span> · Holiday (Sunday)</div>
   <div class="key"><span class="sw" style="background:var(--present-bg);box-shadow:inset 0 0 0 2px var(--present-line)"></span> outlined = before meeting-check enforcement</div>`;
 function setFootnote(){ if(!DATA) return; document.getElementById('footnote').textContent=
-  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. The meeting check is enforced from Jun 4 (4+ meetings); the threshold drops to 3+ from Jul 1. Earlier days reflect source status and are shown outlined. Metrics cover Mon–Sat working days over the selected range/filters: average meetings counts signed-in days (and separately days with ≥1 meeting), average login excludes no-login days, present rate = present ÷ evaluated days. Training days are excluded from metrics.`; }
+  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. The meeting check is enforced from Jun 4 (4+ meetings); the threshold drops to 3+ from Jul 1. Earlier days reflect source status and are shown outlined. Metrics cover Mon–Sat working days over the selected range/filters.`; }
 
 loadData();
 setInterval(loadData, REFRESH_MS);
