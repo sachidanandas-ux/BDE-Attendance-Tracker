@@ -143,12 +143,8 @@ const REFRESH_MS = 5*60*1000;
 let DATA = null;
 const MEETING_ENFORCED_FROM = "2026-06-04";
 const MEETING_THRESHOLD_CHANGE_FROM = "2026-07-01";
-const BDE_DESIGS = {
-  "senior business development executive":"Sr BDE",
-  "business development executive":"BDE",
-  "subject matter expert - fst":"SME-FST",
-  "subject matter expert(sme)":"SME"
-};
+// Role values from new query: BDE, TL, TC, CM — include all non-empty
+const VALID_ROLES = new Set(['bde','tl','tc','cm']);
 
 function parseCSV(text){
   const rows=[]; let i=0,f='',row=[],q=false;
@@ -206,7 +202,7 @@ function evaluate(row, isoD){
   if(rem.includes('training')) return {code:'T'};
   const smin=timeToMin(row.signintime);
   const signin = smin==null?null:`${String(Math.floor(smin/60)).padStart(2,'0')}:${String(smin%60).padStart(2,'0')}`;
-  let vam=num(row.validate_active_meetings); const mc=vam==null?0:vam;
+  let vam=num(row.validate_meetings); const mc=vam==null?0:vam;
   const noLogin=smin==null;
   const out={signin,signinMin:smin,mc};
   if(isoD < MEETING_ENFORCED_FROM){
@@ -226,7 +222,7 @@ function evaluate(row, isoD){
 }
 
 function buildDATA(objs){
-  const rows=objs.filter(r=>BDE_DESIGS[(r.designation__filter||'').toLowerCase()]);
+  const rows=objs.filter(r=>VALID_ROLES.has((r.role||'').toLowerCase()));
   rows.forEach(r=>r._iso=isoDate(r.date));
   const valid=rows.filter(r=>r._iso);
   if(!valid.length) throw new Error('No BDE rows with valid dates found');
@@ -249,7 +245,7 @@ function buildDATA(objs){
       if(!row) return {code:'X',future:iso>dmax,nodata:true};
       return evaluate(row, iso);
     });
-    return {id:eid,name:mt.employee_name,desig:BDE_DESIGS[(mt.designation__filter||'').toLowerCase()],loc:mt.work_location__filter,cells};
+    return {id:eid,name:mt.employee_name,role:(mt.role||'').toUpperCase(),vintage:mt.agent_vintage||'',tlEmail:mt.tl_email||'',loc:mt.work_location__filter,cells};
   });
   const months=[...new Set(allDates.map(d=>fmt(d).slice(0,7)))].sort();
   const fullMonth=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -460,11 +456,13 @@ function tipHTML(emp,dm,c){
   if(c.code==='H')return h+'Holiday — Sunday off';
   if(c.code==='T')return h+'Training day';
   if(c.code==='X')return h+'No data recorded';
-  if(c.nologin){h+=`<div class="crit"><span>No sign-in</span><span class="no">absent</span></div>`;h+=`<div class="note">BDE did not log in — counts as absent</div>`;return h;}
+  if(c.nologin){h+=`<div class="crit"><span>No sign-in</span><span class="no">absent</span></div>`;h+=`<div class="note">BDE did not log in — counts as absent</div>`;if(emp.vintage){h+=`<div class="crit"><span>Vintage</span><span style="opacity:.8">${emp.vintage}</span></div>`;}if(emp.tlEmail){h+=`<div class="crit"><span>TL</span><span style="opacity:.8;font-size:10.5px">${emp.tlEmail}</span></div>`;}return h;}
   if(c.pre){h+=critLine('Sign-in',!!c.signin,c.signin||'no sign-in');h+=critLine('Meetings',c.mc>=1,(c.mc||0));h+=`<div class="note">Before meeting-check enforcement (from Jun 4) — source status</div>`;return h;}
   h+=critLine('Meetings ≥'+c.meetThreshold,c.m,(c.mc!=null?c.mc:0)+' / '+c.meetThreshold);
   h+=critLine('Sign-in <11AM',c.s,c.signin||'no sign-in');
   h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');
+  if(emp.vintage){h+=`<div class="crit"><span>Vintage</span><span style="opacity:.8">${emp.vintage}</span></div>`;}
+  if(emp.tlEmail){h+=`<div class="crit"><span>TL</span><span style="opacity:.8;font-size:10.5px">${emp.tlEmail}</span></div>`;}
   return h;
 }
 
@@ -491,7 +489,7 @@ function render(){
     const st=agentStats(emp,dms);
     const mCol = st.actDays? st.avgMeet.toFixed(1) : '—';
     const fCol = st.actDays? st.avgFollowDone.toFixed(2) : '—';
-    let r=`<tr><td class="name"><div class="emp-name">${emp.name}</div><div class="emp-meta">${emp.id} · ${emp.desig} · ${emp.loc}</div></td>`+`<td class="statcol s-m">${mCol}</td>`+`<td class="statcol s-f">${fCol}</td>`;
+    let r=`<tr><td class="name"><div class="emp-name">${emp.name}</div><div class="emp-meta">${emp.id} · ${emp.role} · ${emp.vintage} · ${emp.loc}</div></td>`+`<td class="statcol s-m">${mCol}</td>`+`<td class="statcol s-f">${fCol}</td>`;
     prevMon=null;
     dms.forEach((dm,k)=>{
       const c=cellFor(emp.id,dm);
