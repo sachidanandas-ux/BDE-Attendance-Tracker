@@ -195,37 +195,76 @@ function isoDate(v){
 }
 function num(v){if(v==null||String(v).trim()==='')return null;const n=parseFloat(String(v).replace(/[^\d.-]/g,''));return isNaN(n)?null:Math.trunc(n);}
 
-function evaluate(row, isoD){
+function evaluate(row, isoD, role, teamVM){
+  role=(role||'BDE').toUpperCase();
   const rem=(row.remarks||'').toLowerCase();
   const status=(row.status||'').toLowerCase();
   if(rem.includes('week off')) return {code:'H'};
   if(rem.includes('training')) return {code:'T'};
   const smin=timeToMin(row.signintime);
-  const signin = smin==null?null:`${String(Math.floor(smin/60)).padStart(2,'0')}:${String(smin%60).padStart(2,'0')}`;
-  let vam=num(row.validate_meetings); const mc=vam==null?0:vam;
+  const signin=smin==null?null:`${String(Math.floor(smin/60)).padStart(2,'0')}:${String(smin%60).padStart(2,'0')}`;
+  const mc=num(row.validate_meetings)||0;
+  const dials=num(row.meetings)||0;
   const noLogin=smin==null;
-  const out={signin,signinMin:smin,mc};
-  if(isoD < MEETING_ENFORCED_FROM){
-    out.code = status==='active'?'P':'A'; out.pre=true;
-    if(out.code==='A'&&noLogin) out.nologin=true;
-    return out;
-  }
-  const s=(!noLogin)&&(smin<11*60);
-  const meetThreshold = isoD < MEETING_THRESHOLD_CHANGE_FROM ? 4 : 3;
-  const m=mc>=meetThreshold;
-  const fsN=num(row.followup_set), fdN=num(row.followups_done);
+  const fsN=num(row.followup_set),fdN=num(row.followups_done);
   let f=true,fset=0,fdone=0;
   if(fsN!=null&&fdN!=null&&fsN>0){fset=fsN;fdone=fdN;f=fdone>=fset;}
-  out.code=(m&&s&&f)?'P':'A'; out.m=m;out.s=s;out.f=f;out.fset=fset;out.fdone=fdone;out.meetThreshold=meetThreshold;
-  if(out.code==='A'&&noLogin) out.nologin=true;
-  return out;
+  const out={signin,signinMin:smin,mc,dials,role};
+
+  // TC: 200 dials + followups (no sign-in criterion)
+  if(role==='TC'){
+    const d=dials>=200;
+    out.code=(d&&f)?'P':'A';
+    out.d=d;out.f=f;out.fset=fset;out.fdone=fdone;out.dialThreshold=200;
+    return out;
+  }
+
+  const out2={...out};
+  if(isoD < MEETING_ENFORCED_FROM){
+    out2.code=status==='active'?'P':'A'; out2.pre=true;
+    if(out2.code==='A'&&noLogin) out2.nologin=true;
+    return out2;
+  }
+  const s=(!noLogin)&&(smin<11*60);
+
+  // TL: sign-in + (own validate_meetings + team BDE validate_meetings) >= 4 + followups
+  if(role==='TL'){
+    const totalVM=mc+(teamVM||0);
+    const m=totalVM>=4;
+    out2.code=(s&&m&&f)?'P':'A';
+    out2.m=m;out2.s=s;out2.f=f;out2.fset=fset;out2.fdone=fdone;
+    out2.totalVM=totalVM;out2.teamVM=teamVM||0;out2.meetThreshold=4;
+    if(out2.code==='A'&&noLogin) out2.nologin=true;
+    return out2;
+  }
+
+  // BDE / CM: original logic
+  const meetThreshold=isoD<MEETING_THRESHOLD_CHANGE_FROM?4:3;
+  const m=mc>=meetThreshold;
+  out2.code=(m&&s&&f)?'P':'A';
+  out2.m=m;out2.s=s;out2.f=f;out2.fset=fset;out2.fdone=fdone;out2.meetThreshold=meetThreshold;
+  if(out2.code==='A'&&noLogin) out2.nologin=true;
+  return out2;
 }
 
 function buildDATA(objs){
   const rows=objs.filter(r=>VALID_ROLES.has((r.role||'').toLowerCase()));
   rows.forEach(r=>r._iso=isoDate(r.date));
   const valid=rows.filter(r=>r._iso);
-  if(!valid.length) throw new Error('No BDE rows with valid dates found');
+  if(!valid.length) throw new Error('No rows with valid dates found');
+
+  // First pass: aggregate BDE validate_meetings per TL email per day
+  // (used to compute TL team_vm; requires own_email column in CSV — see SQL note)
+  const tlBdeVM={};
+  objs.forEach(r=>{
+    if((r.role||'').toLowerCase()!=='bde') return;
+    const te=(r.tl_email||'').toLowerCase().trim(); if(!te) return;
+    const iso=isoDate(r.date); if(!iso) return;
+    const vm=num(r.validate_meetings)||0;
+    if(!tlBdeVM[te]) tlBdeVM[te]={};
+    tlBdeVM[te][iso]=(tlBdeVM[te][iso]||0)+vm;
+  });
+
   const isos=valid.map(r=>r._iso).sort();
   const dmin=isos[0], dmax=isos[isos.length-1];
   const start=new Date(dmin+'T00:00:00'), end=new Date(dmax+'T00:00:00');
@@ -239,13 +278,18 @@ function buildDATA(objs){
   const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const days=allDates.map(d=>({iso:fmt(d),d:d.getDate(),mon:mon[d.getMonth()],dow:dow[d.getDay()],sun:d.getDay()===0,future:fmt(d)>dmax}));
   const employees=order.map(mt=>{
-    const eid=mt.employee_id; const cells=allDates.map(d=>{
+    const eid=mt.employee_id;
+    const role=(mt.role||'').toUpperCase();
+    const ownEmail=(mt.own_email||'').toLowerCase().trim();
+    const cells=allDates.map(d=>{
       if(d.getDay()===0) return {code:'H'};
       const iso=fmt(d); const row=byEmp[eid][iso];
       if(!row) return {code:'X',future:iso>dmax,nodata:true};
-      return evaluate(row, iso);
+      const teamVM=role==='TL'?(tlBdeVM[ownEmail]||{})[iso]||0:0;
+      return evaluate(row, iso, role, teamVM);
     });
-    return {id:eid,name:mt.employee_name,role:(mt.role||'').toUpperCase(),vintage:mt.agent_vintage||'',tlEmail:mt.tl_email||'',loc:mt.work_location__filter,cells};
+    return {id:eid,name:mt.employee_name,role,vintage:mt.agent_vintage||'',
+            tlEmail:mt.tl_email||'',ownEmail,loc:mt.work_location__filter,cells};
   });
   const months=[...new Set(allDates.map(d=>fmt(d).slice(0,7)))].sort();
   const fullMonth=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -456,8 +500,25 @@ function tipHTML(emp,dm,c){
   if(c.code==='H')return h+'Holiday — Sunday off';
   if(c.code==='T')return h+'Training day';
   if(c.code==='X')return h+'No data recorded';
-  if(c.nologin){h+=`<div class="crit"><span>No sign-in</span><span class="no">absent</span></div>`;h+=`<div class="note">BDE did not log in — counts as absent</div>`;if(emp.vintage){h+=`<div class="crit"><span>Vintage</span><span style="opacity:.8">${emp.vintage}</span></div>`;}if(emp.tlEmail){h+=`<div class="crit"><span>TL</span><span style="opacity:.8;font-size:10.5px">${emp.tlEmail}</span></div>`;}return h;}
+  if(c.nologin){h+=`<div class="crit"><span>No sign-in</span><span class="no">absent</span></div>`;h+=`<div class="note">Did not log in — counts as absent</div>`;if(emp.vintage){h+=`<div class="crit"><span>Vintage</span><span style="opacity:.8">${emp.vintage}</span></div>`;}if(emp.tlEmail){h+=`<div class="crit"><span>TL</span><span style="opacity:.8;font-size:10.5px">${emp.tlEmail}</span></div>`;}return h;}
   if(c.pre){h+=critLine('Sign-in',!!c.signin,c.signin||'no sign-in');h+=critLine('Meetings',c.mc>=1,(c.mc||0));h+=`<div class="note">Before meeting-check enforcement (from Jun 4) — source status</div>`;return h;}
+  // TC: dials + followups
+  if(emp.role==='TC'){
+    h+=critLine('Dials ≥200',c.d,(c.dials||0)+' / 200');
+    h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');
+    if(emp.vintage){h+=`<div class="crit"><span>Vintage</span><span style="opacity:.8">${emp.vintage}</span></div>`;}
+    if(emp.tlEmail){h+=`<div class="crit"><span>TL</span><span style="opacity:.8;font-size:10.5px">${emp.tlEmail}</span></div>`;}
+    return h;
+  }
+  // TL: sign-in + team meetings + followups
+  if(emp.role==='TL'){
+    h+=critLine('Team meets ≥4',c.m,(c.totalVM||0)+' / 4 (self '+(c.mc||0)+' + BDEs '+(c.teamVM||0)+')');
+    h+=critLine('Sign-in <11AM',c.s,c.signin||'no sign-in');
+    h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');
+    if(emp.vintage){h+=`<div class="crit"><span>Vintage</span><span style="opacity:.8">${emp.vintage}</span></div>`;}
+    return h;
+  }
+  // BDE / CM
   h+=critLine('Meetings ≥'+c.meetThreshold,c.m,(c.mc!=null?c.mc:0)+' / '+c.meetThreshold);
   h+=critLine('Sign-in <11AM',c.s,c.signin||'no sign-in');
   h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');
