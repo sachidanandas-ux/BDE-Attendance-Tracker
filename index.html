@@ -105,7 +105,7 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
 <header>
   <div class="eyebrow">FST · Field Sales Team</div>
   <h1>BDE Attendance <em>Tracker</em></h1>
-  <p class="sub">Daily present/absent by BDE. Present = 4+ validated meetings (3+ from 1 Jul), sign-in before 11 AM, and followups cleared. Striped (∅) = no sign-in. Metrics and grid update live with the filters below.</p>
+  <p class="sub">Daily present/absent by BDE. Present = sign-in before 11 AM + 3+ OTP meetings (net of followup visits from Aug 1) + 100% followups cleared. Striped (∅) = no sign-in. Metrics and grid update live.</p>
 </header>
 
 <div class="metrics" id="metrics"></div>
@@ -143,6 +143,7 @@ const REFRESH_MS = 5*60*1000;
 let DATA = null;
 const MEETING_ENFORCED_FROM = "2026-06-04";
 const MEETING_THRESHOLD_CHANGE_FROM = "2026-07-01";
+const NEW_MEETING_LOGIC_FROM = "2026-08-01"; // effective meetings = meetings - followups_done
 // Role values from new query: BDE, TL, TC, CM — include all non-empty
 const VALID_ROLES = new Set(['bde','tl','tc','cm']);
 
@@ -238,11 +239,21 @@ function evaluate(row, isoD, role, teamVM){
     return out2;
   }
 
-  // BDE / CM: original logic
+  // BDE / CM
   const meetThreshold=isoD<MEETING_THRESHOLD_CHANGE_FROM?4:3;
-  const m=mc>=meetThreshold;
+  // From Aug 1: effective meetings = total meetings − followups_done (new visits only)
+  let effectiveMC, mcDisplay;
+  if(isoD>=NEW_MEETING_LOGIC_FROM){
+    const totalMtgs=num(row.meetings)||0;
+    effectiveMC=Math.max(0,totalMtgs-fdone);
+    mcDisplay=fdone>0?`${effectiveMC} (${totalMtgs}-${fdone})`:`${effectiveMC}`;
+  }else{
+    effectiveMC=mc; mcDisplay=String(mc);
+  }
+  const m=effectiveMC>=meetThreshold;
   out2.code=(m&&s&&f)?'P':'A';
-  out2.m=m;out2.s=s;out2.f=f;out2.fset=fset;out2.fdone=fdone;out2.meetThreshold=meetThreshold;
+  out2.m=m;out2.s=s;out2.f=f;out2.fset=fset;out2.fdone=fdone;
+  out2.meetThreshold=meetThreshold;out2.effectiveMC=effectiveMC;out2.mcDisplay=mcDisplay;
   if(out2.code==='A'&&noLogin) out2.nologin=true;
   return out2;
 }
@@ -519,7 +530,7 @@ function tipHTML(emp,dm,c){
     return h;
   }
   // BDE / CM
-  h+=critLine('Meetings ≥'+c.meetThreshold,c.m,(c.mc!=null?c.mc:0)+' / '+c.meetThreshold);
+  h+=critLine('Meetings ≥'+c.meetThreshold,c.m,(c.mcDisplay||c.mc||0)+' / '+c.meetThreshold);
   h+=critLine('Sign-in <11AM',c.s,c.signin||'no sign-in');
   h+=critLine('Followups',c.f,c.fset>0?(c.fdone+' / '+c.fset):'none set');
   if(emp.vintage){h+=`<div class="crit"><span>Vintage</span><span style="opacity:.8">${emp.vintage}</span></div>`;}
@@ -601,7 +612,7 @@ document.getElementById('legend').innerHTML=`
   <div class="key"><span class="sw" style="background:var(--hold-bg)"></span> · Holiday (Sunday)</div>
   <div class="key"><span class="sw" style="background:var(--present-bg);box-shadow:inset 0 0 0 2px var(--present-line)"></span> outlined = before meeting-check enforcement</div>`;
 function setFootnote(){ if(!DATA) return; document.getElementById('footnote').textContent=
-  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. The meeting check is enforced from Jun 4 (4+ meetings); the threshold drops to 3+ from Jul 1. Earlier days reflect source status and are shown outlined. Metrics cover Mon–Sat working days over the selected range/filters.`; }
+  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. Meeting check enforced from Jun 4 (4+ meetings); drops to 3+ from Jul 1. From Aug 1: effective meetings = total meetings − followups done (net new visits only). Metrics cover Mon–Sat working days.`; }
 
 loadData();
 setInterval(loadData, REFRESH_MS);
