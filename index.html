@@ -105,7 +105,7 @@ td.cell.has:after{content:"";position:absolute;right:3px;bottom:3px;width:4px;he
 <header>
   <div class="eyebrow">FST · Field Sales Team</div>
   <h1>BDE Attendance <em>Tracker</em></h1>
-  <p class="sub">Daily present/absent by BDE. Present = sign-in before 11 AM + 3+ OTP meetings (net of followup visits from Aug 1) + 100% followups cleared. Striped (∅) = no sign-in. Metrics and grid update live.</p>
+  <p class="sub">Daily present/absent by BDE. Present = sign-in before 11 AM + 5+ OTP meetings net of followup visits from Aug 1 (3+ Jul) + 100% followups cleared. Striped (∅) = no sign-in. Metrics and grid update live.</p>
 </header>
 
 <div class="metrics" id="metrics"></div>
@@ -145,7 +145,7 @@ const MEETING_ENFORCED_FROM = "2026-06-04";
 const MEETING_THRESHOLD_CHANGE_FROM = "2026-07-01";
 const NEW_MEETING_LOGIC_FROM = "2026-08-01"; // effective meetings = meetings - followups_done
 // Role values from new query: BDE, TL, TC, CM — include all non-empty
-const VALID_ROLES = new Set(['bde','tl','tc','cm']);
+const VALID_ROLES = new Set(['bde']); // BDE only
 
 function parseCSV(text){
   const rows=[]; let i=0,f='',row=[],q=false;
@@ -240,13 +240,15 @@ function evaluate(row, isoD, role, teamVM){
   }
 
   // BDE / CM
-  const meetThreshold=isoD<MEETING_THRESHOLD_CHANGE_FROM?4:3;
+  const meetThreshold=isoD<MEETING_THRESHOLD_CHANGE_FROM?4:isoD<NEW_MEETING_LOGIC_FROM?3:5;
   // From Aug 1: effective meetings = total meetings − followups_done (new visits only)
   let effectiveMC, mcDisplay;
   if(isoD>=NEW_MEETING_LOGIC_FROM){
     const totalMtgs=num(row.meetings)||0;
-    effectiveMC=Math.max(0,totalMtgs-fdone);
-    mcDisplay=fdone>0?`${effectiveMC} (${totalMtgs}-${fdone})`:`${effectiveMC}`;
+    // Only subtract followups that were NOT completed (incomplete visits only)
+    const incompleteFD = (fset>0 && fdone<fset) ? fdone : 0;
+    effectiveMC=Math.max(0,totalMtgs-incompleteFD);
+    mcDisplay=incompleteFD>0?`${effectiveMC} (${totalMtgs}-${incompleteFD})`:`${effectiveMC}`;
   }else{
     effectiveMC=mc; mcDisplay=String(mc);
   }
@@ -407,9 +409,18 @@ function empHasNonTraining(emp, dms){
 }
 // Determine effective meeting threshold for the visible date range
 function effectiveThreshold(dms){
-  let has3=false, has4=false;
-  dms.forEach(dm=>{if(!dm.sun){ if(dm.iso>=MEETING_THRESHOLD_CHANGE_FROM) has3=true; else has4=true; }});
-  if(has3 && has4) return {val:null, label:'3–4'};
+  let has3=false, has4=false, has5=false;
+  dms.forEach(dm=>{if(!dm.sun){
+    if(dm.iso>=NEW_MEETING_LOGIC_FROM) has5=true;
+    else if(dm.iso>=MEETING_THRESHOLD_CHANGE_FROM) has3=true;
+    else has4=true;
+  }});
+  const buckets=[has4,has3,has5].filter(Boolean).length;
+  if(buckets>1){
+    const labels=[has4?'4':null,has3?'3':null,has5?'5':null].filter(Boolean);
+    return {val:null, label:labels.join('/')};
+  }
+  if(has5) return {val:5, label:'5'};
   if(has3) return {val:3, label:'3'};
   return {val:4, label:'4'};
 }
@@ -612,7 +623,7 @@ document.getElementById('legend').innerHTML=`
   <div class="key"><span class="sw" style="background:var(--hold-bg)"></span> · Holiday (Sunday)</div>
   <div class="key"><span class="sw" style="background:var(--present-bg);box-shadow:inset 0 0 0 2px var(--present-line)"></span> outlined = before meeting-check enforcement</div>`;
 function setFootnote(){ if(!DATA) return; document.getElementById('footnote').textContent=
-  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. Meeting check enforced from Jun 4 (4+ meetings); drops to 3+ from Jul 1. From Aug 1: effective meetings = total meetings − followups done (net new visits only). Metrics cover Mon–Sat working days.`; }
+  `Data available ${DATA.rangeStart} to ${DATA.rangeEnd}. Meeting check enforced from Jun 4 (4+ meetings); drops to 3+ from Jul 1. From Aug 1: effective meetings = total meetings − followups done ≥ 5 (net new visits only). Metrics cover Mon–Sat working days.`; }
 
 loadData();
 setInterval(loadData, REFRESH_MS);
